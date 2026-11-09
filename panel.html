@@ -1,0 +1,597 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Multistream – panel moderatora</title>
+<style>
+  :root { --bg:#0f1117; --panel:#181b24; --line:#2a2f3d; --text:#e8eaf0; --muted:#9aa1b2; --acc:#e5202e; --ok:#22c55e; --warn:#f59e0b; --btn:#262b38; --tw:#9146ff; --kk:#53fc18; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, "Segoe UI", Roboto, Arial, sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; background: var(--panel); border-bottom: 1px solid var(--line); padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+  header h1 { font-size: 17px; margin: 0; margin-right: auto; }
+  .chip { font-size: 13px; padding: 3px 10px; border-radius: 99px; background: var(--btn); color: var(--muted); white-space: nowrap; }
+  .chip.ok { background: rgba(34,197,94,.15); color: var(--ok); }
+  .chip.bad { background: rgba(229,32,46,.15); color: #ff6b75; }
+  .chip.warn { background: rgba(245,158,11,.15); color: var(--warn); }
+  nav { display: flex; gap: 4px; padding: 10px 16px 0; max-width: 1150px; margin: 0 auto; overflow-x: auto; }
+  nav button { background: none; border: 0; color: var(--muted); padding: 8px 14px; border-radius: 8px 8px 0 0; font: inherit; cursor: pointer; white-space: nowrap; }
+  nav button.on { background: var(--panel); color: var(--text); }
+  main { max-width: 1150px; margin: 0 auto; padding: 0 16px 40px; }
+  section.tab { display: none; background: var(--panel); border-radius: 0 10px 10px 10px; padding: 16px; }
+  section.tab.on { display: block; }
+  h2 { font-size: 13px; margin: 18px 0 8px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+  h2:first-child { margin-top: 0; }
+  button.b { background: var(--btn); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; font: inherit; cursor: pointer; }
+  button.b:hover:not(:disabled) { border-color: #3d4456; }
+  button.b:disabled { opacity: .45; cursor: default; }
+  button.b.red { background: var(--acc); border-color: var(--acc); color: #fff; }
+  button.b.green { background: #16a34a; border-color: #16a34a; color: #fff; }
+  button.b.big { padding: 11px 18px; font-weight: 600; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; }
+  label.f { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+  label.c { display: flex; gap: 8px; align-items: center; font-size: 14px; color: var(--muted); }
+  input[type=text], input[type=url], select, textarea { background: #0d0f15; color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px; font: inherit; width: 100%; }
+  textarea { resize: vertical; }
+  input[type=color] { width: 54px; height: 34px; border: 1px solid var(--line); border-radius: 7px; background: #0d0f15; padding: 2px; }
+  .fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+  .hint { color: var(--muted); font-size: 13px; margin: 6px 0; }
+  .box { border: 1px solid var(--line); border-radius: 9px; padding: 12px; margin: 10px 0; }
+  .warnbox { border-color: rgba(245,158,11,.5); background: rgba(245,158,11,.07); }
+
+  .addrow { display: grid; grid-template-columns: 130px 1fr auto auto; gap: 8px; }
+  @media (max-width: 640px) { .addrow { grid-template-columns: 110px 1fr; } .addrow button { grid-column: span 1; } }
+  .pf { display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .pf.twitch { background: var(--tw); } .pf.kick { background: var(--kk); }
+  .favs { display: flex; flex-wrap: wrap; gap: 6px; }
+  .fav { display: inline-flex; align-items: center; gap: 7px; background: #222736; border: 1px solid #343a4c; color: var(--text); border-radius: 99px; padding: 5px 12px; font: inherit; font-size: 14px; cursor: pointer; }
+  .fav:hover { border-color: #59617a; } .fav.in { opacity: .4; cursor: default; }
+
+  .layout { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+  .layout > .left { flex: 1 1 420px; min-width: 0; }
+  .layout > .right { flex: 1 1 340px; min-width: 0; display: none; }
+  #editor { position: relative; width: 100%; background: repeating-conic-gradient(#151821 0 25%, #1a1e29 0 50%) 0 0/22px 22px; border: 1px dashed var(--line); border-radius: 10px; touch-action: none; user-select: none; }
+  #editor .empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); text-align: center; padding: 20px; }
+  .et { position: absolute; border-radius: 9px; background: #222736; border: 2px solid #343a4c; display: flex; flex-direction: column; justify-content: space-between; padding: 7px 9px; cursor: grab; transition: left .25s, top .25s, border-color .15s; overflow: hidden; }
+  .et.twitch { box-shadow: inset 0 -4px 0 var(--tw); } .et.kick { box-shadow: inset 0 -4px 0 var(--kk); }
+  .et.drag { cursor: grabbing; transition: none; z-index: 3; opacity: .9; border-color: #fff; }
+  .et.target { border-color: var(--warn); }
+  .et .nm { font-weight: 700; display: flex; align-items: center; gap: 6px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .et .pl { font-size: 12px; color: var(--muted); }
+  .et .tools { display: flex; gap: 4px; }
+  .et .tools button { background: rgba(0,0,0,.35); border: 1px solid transparent; color: var(--text); border-radius: 6px; padding: 2px 7px; font-size: 13px; cursor: pointer; }
+  .et .tools button:hover { border-color: #59617a; }
+  .et .tools button.on { background: #f59e0b; color: #000; }
+  .et .num { position: absolute; right: 8px; top: 6px; color: var(--muted); font-size: 12px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  #liveInfo { margin-top: 8px; }
+  #liveInfo b { color: var(--text); }
+  .dirty { color: var(--warn); }
+  #preview { width: 100%; aspect-ratio: 16/9; border: 1px dashed var(--line); border-radius: 8px; background: repeating-conic-gradient(#1b1e28 0 25%, #232735 0 50%) 0 0/24px 24px; }
+
+  .favlist { width: 100%; border-collapse: collapse; }
+  .favlist td { padding: 6px 4px; border-bottom: 1px solid var(--line); }
+  .favlist td:last-child { text-align: right; white-space: nowrap; }
+  .linkout { font-family: ui-monospace, Consolas, monospace; font-size: 12px; word-break: break-all; }
+  .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: #2c3242; color: #fff; padding: 8px 16px; border-radius: 8px; opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 20; }
+  .toast.on { opacity: 1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📺 Multistream – panel moderatora</h1>
+  <span class="chip" id="stBrokers">Serwery: –</span>
+  <span class="chip" id="stOverlay">Overlay: –</span>
+  <span class="chip" id="stLive">–</span>
+</header>
+<nav id="tabs">
+  <button data-t="grid" class="on">Siatka</button>
+  <button data-t="list">Lista streamerów</button>
+  <button data-t="look">Wygląd</button>
+  <button data-t="link">Link i klucze</button>
+</nav>
+<main>
+  <!-- SIATKA -->
+  <section class="tab on" id="t-grid">
+    <h2>Dodaj streamera</h2>
+    <div class="addrow">
+      <select id="addP"><option value="kick">Kick</option><option value="twitch">Twitch</option></select>
+      <input type="text" id="addN" placeholder="nick albo link, np. kick.com/nick" autocomplete="off" spellcheck="false">
+      <button class="b" id="btnAdd">Dodaj</button>
+      <button class="b" id="btnAddFav" title="Dodaj do siatki i zapisz na liście">Dodaj + zapisz ☆</button>
+    </div>
+    <div id="favWrap">
+      <h2 style="margin-top:16px">Z listy (kliknij, żeby dodać)</h2>
+      <div class="favs" id="favChips"></div>
+    </div>
+
+    <div class="layout" style="margin-top:16px">
+      <div class="left">
+        <h2>Układ – przeciągnij okienko, żeby zamienić miejscami (<span id="cnt">0</span>/9)</h2>
+        <div id="editor"></div>
+        <div class="actions">
+          <button class="b big red" id="btnCreate">Utwórz siatkę</button>
+          <button class="b big green" id="btnShow">Pokaż na overlayu</button>
+          <button class="b big" id="btnClear">Wyczyść</button>
+        </div>
+        <div class="hint" id="liveInfo"></div>
+        <label class="c" style="margin-top:10px"><input type="checkbox" id="chkPreview"> Podgląd na żywo (ładuje streamy drugi raz, bez dźwięku)</label>
+      </div>
+      <div class="right" id="previewWrap">
+        <h2>Podgląd overlayu</h2>
+        <iframe id="preview" title="Podgląd" allow="autoplay; encrypted-media" referrerpolicy="origin"></iframe>
+        <p class="hint">Jeśli Twitch pokazuje tu błąd, a na streamie działa – to normalne (podgląd ma inną domenę nadrzędną).</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- LISTA -->
+  <section class="tab" id="t-list">
+    <h2>Zapisani streamerzy</h2>
+    <p class="hint">Ta lista pojawia się w zakładce „Siatka” – jedno kliknięcie dodaje streamera do układu.</p>
+    <table class="favlist"><tbody id="favRows"></tbody></table>
+    <h2>Dodaj wielu naraz</h2>
+    <textarea id="bulk" rows="5" placeholder="Jeden w linii, np.:&#10;kick:nick1&#10;twitch:nick2&#10;https://kick.com/nick3&#10;https://www.twitch.tv/nick4"></textarea>
+    <div class="row"><button class="b" id="btnBulk">Zapisz na liście</button></div>
+  </section>
+
+  <!-- WYGLĄD -->
+  <section class="tab" id="t-look">
+    <h2>Układ siatki</h2>
+    <div class="fields">
+      <label class="f">Liczba kolumn
+        <select id="s_cols"><option value="0">Automatycznie</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select>
+      </label>
+      <label class="f">Przyklej siatkę do
+        <select id="s_anchor">
+          <option value="br">prawego dolnego rogu</option><option value="bl">lewego dolnego rogu</option>
+          <option value="tr">prawego górnego rogu</option><option value="tl">lewego górnego rogu</option>
+          <option value="mc">środka</option><option value="bc">dołu (środek)</option><option value="tc">góry (środek)</option>
+          <option value="mr">prawej (środek)</option><option value="ml">lewej (środek)</option>
+        </select>
+      </label>
+      <label class="f">Odstęp między okienkami <input type="range" id="s_gap" min="0" max="60" step="1"></label>
+      <label class="f">Zaokrąglenie rogów <input type="range" id="s_radius" min="0" max="40" step="1"></label>
+      <label class="f">Grubość ramki <input type="range" id="s_bw" min="0" max="12" step="1"></label>
+      <label class="f">Kolor ramki <input type="color" id="s_border"></label>
+    </div>
+    <p class="hint">Automatycznie: 1 → całe okno, 2 → obok siebie, 3–4 → 2×2, 5–9 → 3 kolumny. Niepełny ostatni rząd dosuwa się w stronę wybranego rogu.</p>
+
+    <h2>Podpisy</h2>
+    <div class="fields">
+      <label class="c"><input type="checkbox" id="s_labels"> Pokazuj podpis (nick)</label>
+      <label class="c"><input type="checkbox" id="s_icons"> Ikonka platformy</label>
+      <label class="f">Położenie podpisu
+        <select id="s_lpos"><option value="bl">lewy dół</option><option value="tl">lewa góra</option><option value="br">prawy dół</option><option value="tr">prawa góra</option></select>
+      </label>
+      <label class="f">Wielkość podpisu <input type="range" id="s_lscale" min="0.5" max="2.5" step="0.05"></label>
+      <label class="f">Tło podpisu <input type="color" id="s_lbg"></label>
+      <label class="f">Przezroczystość tła <input type="range" id="s_lalpha" min="0" max="1" step="0.05"></label>
+      <label class="f">Kolor tekstu <input type="color" id="s_ltext"></label>
+    </div>
+    <h2>Własne ikonki (opcjonalnie)</h2>
+    <p class="hint">Domyślnie ikonka pobiera się z serwisu ikon Google. Możesz podać własny obrazek (link https:// do .png/.svg), np. wrzucony obok plików.</p>
+    <div class="fields">
+      <label class="f" style="grid-column: span 2">Ikonka Twitch <input type="url" id="ic_twitch" placeholder="https://…/twitch.png"></label>
+      <label class="f" style="grid-column: span 2">Ikonka Kick <input type="url" id="ic_kick" placeholder="https://…/kick.png"></label>
+    </div>
+  </section>
+
+  <!-- LINK -->
+  <section class="tab" id="t-link">
+    <h2>Link do overlayu</h2>
+    <p class="hint">Wklej go w narzędziu do overlaya jako element „strona www / iframe / URL” albo jako źródło przeglądarki w OBS. Ustaw <b>duży rozmiar, np. 1920 × 1080</b>, a potem zmniejsz element na scenie – Twitch odtwarza tylko okienka co najmniej 400 × 300 px.</p>
+    <div class="box">
+      <div class="linkout" id="linkOut"></div>
+      <div class="row"><button class="b red" id="btnCopy">Kopiuj link</button></div>
+    </div>
+    <div class="box warnbox hint" id="linkWarn" style="display:none"></div>
+    <p class="hint">Link pozwala tylko <b>oglądać</b> siatkę. Sterować może wyłącznie ta przeglądarka. Mimo to nie wrzucaj linku na czat.</p>
+
+    <h2>Domeny dla Twitcha</h2>
+    <p class="hint">Twitch odtwarza się tylko na stronach, które zna. Overlay sam podaje swoją domenę i domeny stron, w które jest osadzony. Jeśli okienka Twitcha pokazują błąd, wpisz tu domenę swojego narzędzia do overlaya (np. <code>overlay.example.com</code>), jedna w linii.</p>
+    <textarea id="parents" rows="3" placeholder="np. streamelements.com"></textarea>
+    <div class="row"><button class="b" id="btnParents">Zapisz domeny</button></div>
+    <p class="hint" id="detParents"></p>
+
+    <h2>Adres pliku overlay.html</h2>
+    <input type="url" id="overlayBase">
+    <p class="hint">Uzupełnia się sam, jeśli panel i overlay leżą w tym samym miejscu.</p>
+
+    <h2>Kopia zapasowa</h2>
+    <p class="hint">Plik zawiera klucz sterujący, listę streamerów i ustawienia. Przyda się przy zmianie komputera. <b>Nie wysyłaj go nikomu</b> – kto go ma, ten może sterować overlayem.</p>
+    <div class="row">
+      <button class="b" id="btnExport">Pobierz kopię (.json)</button>
+      <button class="b" id="btnImport">Wczytaj kopię</button>
+      <input type="file" id="fileImport" accept="application/json,.json" hidden>
+    </div>
+
+    <h2>Nowe klucze</h2>
+    <p class="hint">Jeśli kopia wyciekła: stary link przestanie działać, trzeba będzie wkleić nowy.</p>
+    <button class="b" id="btnNewKeys">Wygeneruj nowe klucze i link</button>
+
+    <h2>Serwery przekazujące (zaawansowane)</h2>
+    <p class="hint">Publiczne serwery MQTT, przez które idą zaszyfrowane i podpisane wiadomości. Jeden w linii. Po zmianie trzeba ponownie wkleić link.</p>
+    <textarea id="brokers" rows="3"></textarea>
+    <div class="row"><button class="b" id="btnBrokers">Zapisz serwery</button></div>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+
+<script src="mqtt.min.js"></script>
+<script>
+(function () {
+  'use strict';
+  var DEFAULT_BROKERS = ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt', 'wss://test.mosquitto.org:8081/mqtt'];
+  var LS = 'kmulti_panel_v1', MAX = 9;
+  var NICK_RE = { twitch: /^[A-Za-z0-9_]{1,25}$/, kick: /^[A-Za-z0-9_-]{1,30}$/ };
+  var PNAME = { twitch: 'Twitch', kick: 'Kick' };
+  var te = new TextEncoder(), td = new TextDecoder();
+  function $(id) { return document.getElementById(id); }
+  function b64u(buf) { var s = '', b = new Uint8Array(buf); for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+  function unb64u(str) { str = str.replace(/-/g, '+').replace(/_/g, '/'); while (str.length % 4) str += '='; var s = atob(str), b = new Uint8Array(s.length); for (var i = 0; i < s.length; i++) b[i] = s.charCodeAt(i); return b; }
+  function rnd(n) { return b64u(crypto.getRandomValues(new Uint8Array(n))); }
+  function toast(t) { var e = $('toast'); e.textContent = t; e.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(function () { e.classList.remove('on'); }, 2000); }
+  function tkey(t) { return t.p + ':' + t.n.toLowerCase(); }
+  function el(tag, cls, txt) { var e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; }
+
+  if (!window.crypto || !crypto.subtle) {
+    document.body.innerHTML = '<p style="padding:20px">Panel musi być otwarty przez <b>https://</b> (np. GitHub Pages), inaczej przeglądarka nie udostępnia szyfrowania.</p>';
+    return;
+  }
+
+  function defaultLive() {
+    return { show: false, tiles: [], audio: '', parents: [], icons: { twitch: '', kick: '' },
+      style: { cols: 0, anchor: 'br', gap: 8, radius: 10, bw: 2, border: '#ffffff', labels: true, icons: true, lpos: 'bl', lscale: 1, lbg: '#000000', lalpha: 0.65, ltext: '#ffffff' } };
+  }
+
+  var S = null;
+  try { S = JSON.parse(localStorage.getItem(LS)); } catch (e) {}
+  function save() { try { localStorage.setItem(LS, JSON.stringify(S)); } catch (e) { toast('Nie udało się zapisać w przeglądarce!'); } }
+
+  var privKey, aesKey, seq = 0, clients = [], acks = {}, pubChain = Promise.resolve();
+
+  function newKeys() {
+    return crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']).then(function (kp) {
+      return Promise.all([crypto.subtle.exportKey('jwk', kp.privateKey), crypto.subtle.exportKey('raw', kp.publicKey)]);
+    }).then(function (r) { return { ch: rnd(16), aes: rnd(32), pub: b64u(r[1]), priv: r[0] }; });
+  }
+  function loadKeys() {
+    return Promise.all([
+      crypto.subtle.importKey('jwk', S.keys.priv, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']),
+      crypto.subtle.importKey('raw', unb64u(S.keys.aes), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
+    ]).then(function (k) { privKey = k[0]; aesKey = k[1]; });
+  }
+  function init() {
+    var p = Promise.resolve();
+    if (!S || !S.keys || !S.live) {
+      p = newKeys().then(function (k) { S = { keys: k, draft: [], favs: [], live: defaultLive(), brokers: DEFAULT_BROKERS.slice(), overlayBase: '' }; save(); });
+    }
+    return p.then(loadKeys).then(function () { renderAll(); connect(); });
+  }
+
+  // ---------- połączenie ----------
+  function topic() { return 'kmulti/v1/' + S.keys.ch; }
+  function connect() {
+    clients.forEach(function (c) { try { c.end(true); } catch (e) {} });
+    clients = []; acks = {};
+    (S.brokers || DEFAULT_BROKERS).forEach(function (url) {
+      var c = mqtt.connect(url, { clientId: 'kmp_' + rnd(8), clean: true, reconnectPeriod: 4000, connectTimeout: 8000, keepalive: 30 });
+      c.on('connect', function () { c.subscribe(topic() + '/ack', { qos: 0 }); status(); publishNow(); });
+      c.on('close', status);
+      c.on('error', function () {});
+      c.on('message', function (t, payload) { onAck(payload); });
+      clients.push(c);
+    });
+    status();
+  }
+  function onAck(payload) {
+    var o; try { o = JSON.parse(td.decode(payload)); } catch (e) { return; }
+    if (!o || typeof o.iv !== 'string' || typeof o.ct !== 'string') return;
+    crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64u(o.iv), additionalData: te.encode(S.keys.ch + '|ack') }, aesKey, unb64u(o.ct)).then(function (pt) {
+      var a = JSON.parse(td.decode(pt));
+      if (a && typeof a.id === 'string') { a.at = Date.now(); acks[a.id] = a; status(); }
+    }).catch(function () {});
+  }
+  function liveOverlays() { var now = Date.now(); return Object.keys(acks).map(function (k) { return acks[k]; }).filter(function (a) { return now - a.at < 25000 && !a.pv; }); }
+  function status() {
+    var n = clients.filter(function (c) { return c.connected; }).length;
+    var b = $('stBrokers'); b.textContent = 'Serwery: ' + n + '/' + clients.length; b.className = 'chip ' + (n ? 'ok' : 'bad');
+    var L = S.live, lv = liveOverlays(), o = $('stOverlay');
+    var hasTw = L.tiles.some(function (t) { return t.p === 'twitch'; });
+    var small = lv.filter(function (a) { return a.tw && (a.tw < 400 || a.th < 300); });
+    if (!lv.length) { o.textContent = 'Overlay: nie wykryto'; o.className = 'chip warn'; o.title = 'Żaden overlay nie jest teraz otwarty – to normalne, jeśli OBS jest wyłączony.'; }
+    else if (small.length && hasTw) { o.textContent = 'Overlay: okienka ' + small[0].tw + '×' + small[0].th + ' px – za małe dla Twitcha'; o.className = 'chip warn'; o.title = 'Twitch wymaga min. 400×300 px. Powiększ element overlaya (np. 1920×1080) i zmniejsz go na scenie.'; }
+    else { o.textContent = 'Overlay: online (' + lv.length + ')' + (lv[0].tw ? ' · ' + lv[0].tw + '×' + lv[0].th + ' px' : ''); o.className = 'chip ok'; o.title = 'Overlay jest otwarty i odbiera dane. Liczby to rozmiar jednego okienka.'; }
+    var l = $('stLive');
+    if (!L.tiles.length) { l.textContent = 'Na streamie: pusto'; l.className = 'chip'; }
+    else { l.textContent = 'Na streamie: ' + (L.show ? 'widoczna' : 'ukryta') + ' (' + L.tiles.length + ')'; l.className = 'chip ' + (L.show ? 'ok' : ''); }
+    var par = {}; lv.forEach(function (a) { (a.par || []).forEach(function (h) { par[h] = 1; }); });
+    $('detParents').textContent = Object.keys(par).length ? 'Overlay wykrył automatycznie: ' + Object.keys(par).join(', ') : '';
+  }
+  setInterval(status, 5000);
+
+  var pubTimer = null;
+  function publishSoon() { save(); clearTimeout(pubTimer); pubTimer = setTimeout(publishNow, 250); }
+  function publishNow() {
+    clearTimeout(pubTimer); save();
+    pubChain = pubChain.then(function () {
+      seq = Math.max(Date.now(), seq + 1);
+      var s = seq, iv = crypto.getRandomValues(new Uint8Array(12));
+      return crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv, additionalData: te.encode(S.keys.ch + '|' + s) }, aesKey, te.encode(JSON.stringify(S.live))).then(function (ct) {
+        var ivs = b64u(iv), cts = b64u(ct);
+        return crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, privKey, te.encode(S.keys.ch + '|' + s + '|' + ivs + '|' + cts)).then(function (sig) {
+          var msg = JSON.stringify({ s: s, iv: ivs, ct: cts, sig: b64u(sig) });
+          clients.forEach(function (c) { if (c.connected) c.publish(topic() + '/state', msg, { qos: 1, retain: true }); });
+        });
+      });
+    }).catch(function (e) { console.error(e); });
+  }
+  setInterval(publishNow, 30000);
+
+  // ---------- parsowanie wpisu ----------
+  function parseEntry(str, defP) {
+    str = (str || '').trim(); if (!str) return null;
+    var m, p = defP, n = str;
+    if ((m = str.match(/^(?:https?:\/\/)?(?:www\.|m\.)?twitch\.tv\/([^\/?#\s]+)/i))) { p = 'twitch'; n = m[1]; }
+    else if ((m = str.match(/^(?:https?:\/\/)?(?:www\.)?kick\.com\/([^\/?#\s]+)/i))) { p = 'kick'; n = m[1]; }
+    else if ((m = str.match(/^(twitch|kick)\s*[:\/,;\s]\s*(\S+)$/i))) { p = m[1].toLowerCase(); n = m[2]; }
+    n = n.replace(/^@/, '');
+    if (!NICK_RE[p] || !NICK_RE[p].test(n)) return null;
+    return { p: p, n: n };
+  }
+
+  // ---------- akcje na liście roboczej ----------
+  function inDraft(t) { var k = tkey(t); return S.draft.some(function (x) { return tkey(x) === k; }); }
+  function addDraft(t) {
+    if (inDraft(t)) { toast(t.n + ' już jest w układzie'); return false; }
+    if (S.draft.length >= MAX) { toast('Maksymalnie ' + MAX + ' okienek'); return false; }
+    S.draft.push({ p: t.p, n: t.n }); save(); renderEditor(); renderFavChips(); return true;
+  }
+  function addFav(t) {
+    var k = tkey(t);
+    if (S.favs.some(function (x) { return tkey(x) === k; })) return false;
+    S.favs.push({ p: t.p, n: t.n });
+    S.favs.sort(function (a, b) { return a.n.toLowerCase() < b.n.toLowerCase() ? -1 : 1; });
+    save(); renderFavChips(); renderFavRows(); return true;
+  }
+  function addFromInput(fav) {
+    var t = parseEntry($('addN').value, $('addP').value);
+    if (!t) { toast('Niepoprawny nick (dozwolone litery, cyfry, _ ' + ($('addP').value === 'kick' ? 'i -' : '') + ')'); return; }
+    var ok = addDraft(t);
+    if (fav && addFav(t)) toast('Zapisano ' + t.n + ' na liście');
+    if (ok || fav) { $('addN').value = ''; $('addP').value = t.p; }
+    $('addN').focus();
+  }
+
+  // ---------- render ----------
+  function isDirty() { return JSON.stringify(S.draft.map(tkey)) !== JSON.stringify(S.live.tiles.map(tkey)) || S.draft.some(function (t, i) { return S.live.tiles[i] && S.live.tiles[i].n !== t.n; }); }
+
+  function renderFavChips() {
+    var w = $('favChips'); w.innerHTML = '';
+    $('favWrap').style.display = S.favs.length ? 'block' : 'none';
+    S.favs.forEach(function (t) {
+      var b = el('button', 'fav' + (inDraft(t) ? ' in' : '')); b.title = PNAME[t.p];
+      b.appendChild(el('span', 'pf ' + t.p)); b.appendChild(el('span', null, t.n));
+      b.onclick = function () { if (!inDraft(t)) addDraft(t); };
+      w.appendChild(b);
+    });
+  }
+  function renderFavRows() {
+    var tb = $('favRows'); tb.innerHTML = '';
+    if (!S.favs.length) { var tr0 = el('tr'); var td0 = el('td', 'hint', 'Lista jest pusta. Dodaj streamerów poniżej albo przyciskiem „Dodaj + zapisz ☆” w zakładce Siatka.'); tr0.appendChild(td0); tb.appendChild(tr0); return; }
+    S.favs.forEach(function (t, i) {
+      var tr = el('tr'), a = el('td'), b = el('td');
+      a.appendChild(el('span', 'pf ' + t.p)); a.appendChild(document.createTextNode('  ' + t.n + '  ')); a.appendChild(el('span', 'hint', PNAME[t.p]));
+      var add = el('button', 'b', 'Do siatki'); add.onclick = function () { addDraft(t); };
+      var del = el('button', 'b', 'Usuń'); del.style.marginLeft = '6px';
+      del.onclick = function () { S.favs.splice(i, 1); save(); renderFavRows(); renderFavChips(); };
+      b.appendChild(add); b.appendChild(del); tr.appendChild(a); tr.appendChild(b); tb.appendChild(tr);
+    });
+  }
+
+  function autoCols(n) { return n <= 1 ? 1 : n <= 4 ? 2 : 3; }
+  var tileRects = [];
+  function renderEditor() {
+    var ed = $('editor'), D = S.draft, n = D.length;
+    ed.innerHTML = ''; $('cnt').textContent = n;
+    var W = ed.clientWidth || 600;
+    if (!n) { ed.style.height = Math.round(W * 9 / 16) + 'px'; ed.appendChild(el('div', 'empty', 'Dodaj streamerów powyżej – tutaj zobaczysz układ siatki.')); tileRects = []; renderLiveInfo(); return; }
+    var cols = Math.min(S.live.style.cols || autoCols(n), n), rows = Math.ceil(n / cols), gap = 8;
+    var w = (W - 16 - gap * (cols - 1)) / cols, h = Math.max(w * 9 / 16, 92);
+    ed.style.height = (rows * h + gap * (rows - 1) + 16) + 'px';
+    var ax = { l: 0, c: 0.5, r: 1 }[S.live.style.anchor[1]];
+    tileRects = [];
+    D.forEach(function (t, i) {
+      var r = Math.floor(i / cols), c = i % cols, inRow = (r === rows - 1) ? n - r * cols : cols;
+      var x = 8 + (cols - inRow) * (w + gap) * ax + c * (w + gap), y = 8 + r * (h + gap);
+      tileRects.push({ x: x, y: y, w: w, h: h });
+      var d = el('div', 'et ' + t.p); d.dataset.i = i;
+      d.style.left = x + 'px'; d.style.top = y + 'px'; d.style.width = w + 'px'; d.style.height = h + 'px';
+      var top = el('div'); var nm = el('div', 'nm'); nm.appendChild(el('span', 'pf ' + t.p)); nm.appendChild(el('span', null, t.n));
+      top.appendChild(nm); top.appendChild(el('div', 'pl', PNAME[t.p])); d.appendChild(top);
+      d.appendChild(el('div', 'num', String(i + 1)));
+      var tools = el('div', 'tools');
+      var au = el('button', S.live.audio === tkey(t) ? 'on' : '', '🔊'); au.title = 'Dźwięk z tego okienka (tylko jedno naraz)';
+      au.onclick = function (ev) { ev.stopPropagation(); S.live.audio = S.live.audio === tkey(t) ? '' : tkey(t); renderEditor(); publishNow(); toast(S.live.audio ? 'Dźwięk: ' + t.n : 'Dźwięk wyłączony'); };
+      var fv = el('button', '', '☆'); fv.title = 'Zapisz na liście';
+      fv.onclick = function (ev) { ev.stopPropagation(); toast(addFav(t) ? 'Zapisano ' + t.n + ' na liście' : t.n + ' już jest na liście'); };
+      var rm = el('button', '', '✕'); rm.title = 'Usuń z układu';
+      rm.onclick = function (ev) { ev.stopPropagation(); S.draft.splice(i, 1); save(); renderEditor(); renderFavChips(); };
+      [au, fv, rm].forEach(function (b) { b.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); }); tools.appendChild(b); });
+      d.appendChild(tools);
+      d.addEventListener('pointerdown', startDrag);
+      ed.appendChild(d);
+    });
+    renderLiveInfo();
+  }
+
+  // przeciąganie (mysz i dotyk): upuszczenie na inne okienko zamienia je miejscami
+  var drag = null;
+  function startDrag(ev) {
+    if (ev.button !== undefined && ev.button !== 0) return;
+    var d = ev.currentTarget, i = +d.dataset.i, r = $('editor').getBoundingClientRect();
+    drag = { d: d, i: i, sx: ev.clientX, sy: ev.clientY, ox: r.left, oy: r.top, target: -1, moved: false };
+    d.setPointerCapture(ev.pointerId);
+    d.addEventListener('pointermove', moveDrag); d.addEventListener('pointerup', endDrag); d.addEventListener('pointercancel', endDrag);
+  }
+  function moveDrag(ev) {
+    if (!drag) return;
+    var dx = ev.clientX - drag.sx, dy = ev.clientY - drag.sy;
+    if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 5) return;
+    drag.moved = true; drag.d.classList.add('drag');
+    drag.d.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+    var px = ev.clientX - drag.ox, py = ev.clientY - drag.oy, t = -1;
+    tileRects.forEach(function (r, j) { if (j !== drag.i && px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) t = j; });
+    if (t !== drag.target) {
+      document.querySelectorAll('.et.target').forEach(function (x) { x.classList.remove('target'); });
+      if (t >= 0) document.querySelector('.et[data-i="' + t + '"]').classList.add('target');
+      drag.target = t;
+    }
+  }
+  function endDrag() {
+    if (!drag) return;
+    var g = drag; drag = null;
+    if (g.moved && g.target >= 0) {
+      var a = S.draft[g.i]; S.draft[g.i] = S.draft[g.target]; S.draft[g.target] = a; save();
+    }
+    renderEditor();
+  }
+
+  function renderLiveInfo() {
+    var L = S.live, info = $('liveInfo'), dirty = isDirty();
+    $('btnCreate').textContent = L.tiles.length ? 'Zaktualizuj siatkę' : 'Utwórz siatkę';
+    $('btnCreate').disabled = !S.draft.length || !dirty;
+    $('btnShow').disabled = !L.tiles.length;
+    $('btnShow').textContent = L.show ? 'Ukryj' : 'Pokaż na overlayu';
+    $('btnShow').className = 'b big ' + (L.show ? '' : 'green');
+    $('btnClear').disabled = !L.tiles.length && !S.draft.length;
+    info.innerHTML = '';
+    if (!L.tiles.length) info.appendChild(document.createTextNode('Na overlayu nie ma teraz siatki.'));
+    else {
+      info.appendChild(document.createTextNode('Na overlayu: '));
+      info.appendChild(el('b', null, L.tiles.map(function (t) { return t.n; }).join(', ')));
+      info.appendChild(document.createTextNode(' – ' + (L.show ? 'widoczna na streamie.' : 'gotowa, ukryta (streamy już się ładują).')));
+    }
+    if (dirty && S.draft.length) info.appendChild(el('div', 'dirty', '● Układ różni się od tego na overlayu – kliknij „' + $('btnCreate').textContent + '”.'));
+    status();
+  }
+
+  function bindLook() {
+    var y = S.live.style;
+    ['cols', 'anchor', 'gap', 'radius', 'bw', 'border', 'lpos', 'lscale', 'lbg', 'lalpha', 'ltext'].forEach(function (k) {
+      var e = $('s_' + k); e.value = y[k];
+      e.oninput = e.onchange = function () { y[k] = (e.type === 'range' || k === 'cols') ? Number(e.value) : e.value; if (k === 'cols' || k === 'anchor') renderEditor(); publishSoon(); };
+    });
+    ['labels', 'icons'].forEach(function (k) { var e = $('s_' + k); e.checked = y[k]; e.onchange = function () { y[k] = e.checked; publishSoon(); }; });
+    ['twitch', 'kick'].forEach(function (p) { var e = $('ic_' + p); e.value = S.live.icons[p] || ''; e.oninput = function () { S.live.icons[p] = e.value.trim(); publishSoon(); }; });
+  }
+
+  function overlayBase() {
+    if (S.overlayBase) return S.overlayBase;
+    try { return new URL('overlay.html', location.href).href.split('#')[0].split('?')[0]; } catch (e) { return ''; }
+  }
+  function overlayLink(preview) {
+    var h = 'c=' + S.keys.ch + '&k=' + S.keys.aes + '&p=' + S.keys.pub, br = S.brokers || DEFAULT_BROKERS;
+    if (br.join(',') !== DEFAULT_BROKERS.join(',')) h += '&b=' + br.map(encodeURIComponent).join(',');
+    if (preview) h += '&preview=1';
+    return overlayBase() + '#' + h;
+  }
+  function renderLink() {
+    $('linkOut').textContent = overlayLink(false);
+    $('overlayBase').value = overlayBase();
+    $('brokers').value = (S.brokers || DEFAULT_BROKERS).join('\n');
+    $('parents').value = (S.live.parents || []).join('\n');
+    var w = $('linkWarn'), base = overlayBase();
+    if (!/^https:\/\//i.test(base) && !/^http:\/\/(localhost|127\.0\.0\.1)/i.test(base)) {
+      w.style.display = 'block';
+      w.textContent = 'Uwaga: adres overlayu nie zaczyna się od https://. Wrzuć pliki na hosting (np. GitHub Pages – instrukcja w README) i otwórz panel stamtąd, albo wpisz poniżej adres overlay.html.';
+    } else w.style.display = 'none';
+    if ($('chkPreview').checked) $('preview').src = overlayLink(true);
+  }
+  function renderAll() { renderFavChips(); renderFavRows(); renderEditor(); bindLook(); renderLink(); }
+
+  // ---------- zdarzenia ----------
+  document.querySelectorAll('#tabs button').forEach(function (b) {
+    b.onclick = function () {
+      document.querySelectorAll('#tabs button').forEach(function (x) { x.classList.toggle('on', x === b); });
+      document.querySelectorAll('section.tab').forEach(function (s) { s.classList.toggle('on', s.id === 't-' + b.dataset.t); });
+      if (b.dataset.t === 'grid') renderEditor();
+    };
+  });
+  $('btnAdd').onclick = function () { addFromInput(false); };
+  $('btnAddFav').onclick = function () { addFromInput(true); };
+  $('addN').addEventListener('keydown', function (e) { if (e.key === 'Enter') addFromInput(false); });
+  $('addN').addEventListener('input', function () { var t = parseEntry($('addN').value, $('addP').value); if (t && /twitch|kick/i.test($('addN').value)) $('addP').value = t.p; });
+
+  $('btnCreate').onclick = function () {
+    var first = !S.live.tiles.length;
+    S.live.tiles = S.draft.map(function (t) { return { p: t.p, n: t.n }; });
+    if (S.live.audio && !S.live.tiles.some(function (t) { return tkey(t) === S.live.audio; })) S.live.audio = '';
+    publishNow(); renderEditor();
+    toast(S.live.show ? 'Siatka zaktualizowana na streamie' : (first ? 'Siatka gotowa (ukryta) – kliknij „Pokaż na overlayu”' : 'Siatka zaktualizowana (ukryta)'));
+  };
+  $('btnShow').onclick = function () { if (!S.live.tiles.length) return; S.live.show = !S.live.show; publishNow(); renderLiveInfo(); };
+  $('btnClear').onclick = function () {
+    if (!confirm('Wyczyścić siatkę? Zniknie ze streamu, a układ zostanie opróżniony (lista zapisanych zostaje).')) return;
+    S.live.tiles = []; S.live.show = false; S.live.audio = ''; S.draft = [];
+    publishNow(); renderEditor(); renderFavChips(); toast('Wyczyszczono');
+  };
+  $('chkPreview').onchange = function () {
+    var on = $('chkPreview').checked;
+    $('previewWrap').style.display = on ? 'block' : 'none';
+    $('preview').src = on ? overlayLink(true) : 'about:blank';
+  };
+  $('btnBulk').onclick = function () {
+    var ok = 0, bad = [];
+    $('bulk').value.split('\n').forEach(function (l) { if (!l.trim()) return; var t = parseEntry(l, 'kick'); if (!t) bad.push(l.trim()); else if (addFav(t)) ok++; });
+    $('bulk').value = bad.join('\n');
+    toast('Zapisano: ' + ok + (bad.length ? ' · niepoprawne zostały w polu' : ''));
+  };
+  $('btnParents').onclick = function () {
+    var list = $('parents').value.split(/[\n,\s]+/).map(function (h) { return h.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/[\/:].*$/, ''); }).filter(Boolean);
+    S.live.parents = list.slice(0, 10); publishNow(); renderLink(); toast('Zapisano domeny');
+  };
+  $('btnCopy').onclick = function () {
+    var t = overlayLink(false);
+    (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(function () { toast('Skopiowano link'); }, function () {
+      var r = document.createRange(); r.selectNodeContents($('linkOut')); var s = getSelection(); s.removeAllRanges(); s.addRange(r); toast('Zaznaczono – skopiuj Ctrl+C');
+    });
+  };
+  $('overlayBase').onchange = function () { S.overlayBase = $('overlayBase').value.trim().split('#')[0]; save(); renderLink(); };
+  $('btnBrokers').onclick = function () {
+    var list = $('brokers').value.split('\n').map(function (l) { return l.trim(); }).filter(function (l) { return /^wss?:\/\//i.test(l); });
+    if (!list.length) { toast('Podaj co najmniej jeden adres wss://'); return; }
+    S.brokers = list; save(); connect(); renderLink(); toast('Zapisano – wklej nowy link do overlaya');
+  };
+  $('btnExport').onclick = function () {
+    var blob = new Blob([JSON.stringify({ kmulti: 1, data: S }, null, 1)], { type: 'application/json' });
+    var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'multistream-kopia-' + new Date().toISOString().slice(0, 10) + '.json';
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  };
+  $('btnImport').onclick = function () { $('fileImport').click(); };
+  $('fileImport').onchange = function () {
+    var f = $('fileImport').files[0]; if (!f) return;
+    f.text().then(function (txt) {
+      var o = JSON.parse(txt);
+      if (!o || o.kmulti !== 1 || !o.data || !o.data.keys || !o.data.live) throw new Error('zły plik');
+      if (!confirm('Wczytać kopię? Obecne ustawienia w tej przeglądarce zostaną zastąpione.')) return;
+      S = o.data; S.draft = S.draft || []; S.favs = S.favs || []; save();
+      return loadKeys().then(function () { renderAll(); connect(); toast('Wczytano kopię'); });
+    }).catch(function () { toast('To nie jest poprawny plik kopii'); });
+    $('fileImport').value = '';
+  };
+  $('btnNewKeys').onclick = function () {
+    if (!confirm('Na pewno? Stary link do overlayu przestanie działać i trzeba będzie wkleić nowy.')) return;
+    newKeys().then(function (k) { S.keys = k; save(); return loadKeys(); }).then(function () { renderLink(); connect(); toast('Nowe klucze – skopiuj nowy link'); });
+  };
+  var rzt, lastW = 0;
+  function onResize() { var w = $('editor').clientWidth; if (w && w !== lastW) { lastW = w; clearTimeout(rzt); rzt = setTimeout(renderEditor, 60); } }
+  if (window.ResizeObserver) new ResizeObserver(onResize).observe($('editor')); else window.addEventListener('resize', onResize);
+
+  init().catch(function (e) { console.error(e); toast('Błąd uruchamiania panelu'); });
+})();
+</script>
+</body>
+</html>

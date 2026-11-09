@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="origin">
+<title>Multistream overlay</title>
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+  body { font-family: "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+  #wrap { position: absolute; inset: 0; transition: opacity .45s ease; }
+  #wrap.hidden { opacity: 0; }
+  .tile { position: absolute; overflow: hidden; box-sizing: border-box; background: #000;
+          border: var(--bw) solid var(--border); border-radius: var(--radius);
+          transition: left .45s ease, top .45s ease, width .45s ease, height .45s ease, opacity .4s ease; }
+  .tile.new { opacity: 0; }
+  .tile iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
+  .label { position: absolute; z-index: 2; display: flex; align-items: center; gap: .4em; max-width: calc(100% - 1.2em);
+           padding: .28em .6em .28em .4em; border-radius: .45em; background: var(--lbg); color: var(--ltext);
+           font-weight: 700; line-height: 1.15; white-space: nowrap; pointer-events: none; }
+  .label.bl { left: .5em; bottom: .5em; } .label.tl { left: .5em; top: .5em; }
+  .label.br { right: .5em; bottom: .5em; } .label.tr { right: .5em; top: .5em; }
+  .label span { overflow: hidden; text-overflow: ellipsis; }
+  .label img, .label .badge { width: 1.25em; height: 1.25em; flex: none; border-radius: .25em; }
+  .label .badge { display: inline-flex; align-items: center; justify-content: center; font-size: .8em; width: 1.55em; height: 1.55em; color: #000; font-weight: 900; }
+  .label .audio { font-size: .9em; }
+  #note { position: absolute; left: 8px; bottom: 8px; z-index: 9; font: 13px/1.35 system-ui, sans-serif; color: #fff;
+          background: rgba(0,0,0,.72); padding: 6px 10px; border-radius: 6px; max-width: calc(100% - 36px); display: none; }
+</style>
+</head>
+<body>
+<div id="wrap" class="hidden"></div>
+<div id="note"></div>
+<script src="mqtt.min.js"></script>
+<script>
+(function () {
+  'use strict';
+  var DEFAULT_BROKERS = ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt', 'wss://test.mosquitto.org:8081/mqtt'];
+  var DEFAULT_ICONS = { twitch: 'https://www.google.com/s2/favicons?domain=twitch.tv&sz=64', kick: 'https://www.google.com/s2/favicons?domain=kick.com&sz=64' };
+  var BADGE = { twitch: ['#9146ff', 'T'], kick: ['#53fc18', 'K'] };
+  var NICK_RE = { twitch: /^[A-Za-z0-9_]{1,25}$/, kick: /^[A-Za-z0-9_-]{1,30}$/ };
+  var HOST_RE = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+
+  var hp = new URLSearchParams(location.hash.slice(1));
+  var CH = hp.get('c') || '', KEY_AES = hp.get('k') || '', KEY_PUB = hp.get('p') || '';
+  var PREVIEW = hp.get('preview') === '1', DEBUG = PREVIEW || hp.get('debug') === '1';
+  var BROKERS = (hp.get('b') ? hp.get('b').split(',') : DEFAULT_BROKERS).filter(function (u) { return /^wss?:\/\//i.test(u); });
+  var TOPIC = 'kmulti/v1/' + CH;
+
+  var noteEl = document.getElementById('note');
+  function note(msg, always) { if (!DEBUG && !always) return; noteEl.textContent = msg; noteEl.style.display = msg ? 'block' : 'none'; }
+
+  var te = new TextEncoder(), td = new TextDecoder();
+  function b64u(buf) { var s = '', b = new Uint8Array(buf); for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+  function unb64u(str) { str = str.replace(/-/g, '+').replace(/_/g, '/'); while (str.length % 4) str += '='; var s = atob(str), b = new Uint8Array(s.length); for (var i = 0; i < s.length; i++) b[i] = s.charCodeAt(i); return b; }
+  function clamp(v, a, b, d) { v = Number(v); return isFinite(v) ? Math.min(b, Math.max(a, v)) : d; }
+  function hex(v, d) { return (typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v)) ? v : d; }
+  function rgba(h, a) { var n = parseInt(h.slice(1), 16); return 'rgba(' + (n >> 16 & 255) + ',' + (n >> 8 & 255) + ',' + (n & 255) + ',' + a + ')'; }
+  function safeUrl(u) { return (typeof u === 'string' && /^https:\/\/[^\s"'<>]+$/i.test(u.trim())) ? u.trim() : ''; }
+  function tkey(t) { return t.p + ':' + t.n.toLowerCase(); }
+
+  if (!CH || !KEY_AES || !KEY_PUB || !window.crypto || !crypto.subtle || !window.mqtt) {
+    note('Multistream: niepełny link do overlayu (albo strona nie jest otwarta przez https). Skopiuj link ponownie z panelu.', true);
+    return;
+  }
+
+  // domeny, które Twitch musi znać ("parent"): ta strona + wszystkie strony, w które jest osadzona
+  var autoParents = [];
+  function addParent(h) { h = (h || '').toLowerCase(); if (HOST_RE.test(h) && autoParents.indexOf(h) < 0) autoParents.push(h); }
+  addParent(location.hostname);
+  try { if (location.ancestorOrigins) for (var i = 0; i < location.ancestorOrigins.length; i++) { try { addParent(new URL(location.ancestorOrigins[i]).hostname); } catch (e) {} } } catch (e) {}
+
+  var aesKey, pubKey;
+  Promise.all([
+    crypto.subtle.importKey('raw', unb64u(KEY_AES), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']),
+    crypto.subtle.importKey('raw', unb64u(KEY_PUB), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify'])
+  ]).then(function (k) { aesKey = k[0]; pubKey = k[1]; connect(); })
+    .catch(function () { note('Multistream: uszkodzony link (klucze). Skopiuj link ponownie z panelu.', true); });
+
+  var clients = [], lastSeq = 0, chain = Promise.resolve(), pending = 0;
+  var instanceId = b64u(crypto.getRandomValues(new Uint8Array(6)));
+
+  function connect() {
+    note('Łączenie…');
+    BROKERS.forEach(function (url) {
+      var c = mqtt.connect(url, { clientId: 'kmo_' + b64u(crypto.getRandomValues(new Uint8Array(8))), clean: true, reconnectPeriod: 4000, connectTimeout: 8000, keepalive: 30 });
+      c.on('connect', function () { c.subscribe(TOPIC + '/state', { qos: 1 }); updNote(); sendAck(); });
+      c.on('close', updNote);
+      c.on('error', function () {});
+      c.on('message', function (topic, payload) {
+        if (pending > 30) return;
+        pending++;
+        chain = chain.then(function () { return handle(payload); }).catch(function () {}).then(function () { pending--; });
+      });
+      clients.push(c);
+    });
+    setInterval(sendAck, 10000);
+  }
+  function updNote() {
+    if (!DEBUG) return;
+    var n = clients.filter(function (c) { return c.connected; }).length;
+    if (!cur) note(n ? 'Połączono (' + n + '/' + clients.length + '), czekam na dane z panelu…' : 'Łączenie…');
+    else note(n ? '' : 'Brak połączenia, ponawiam…');
+  }
+
+  function handle(payload) {
+    var o;
+    try { o = JSON.parse(td.decode(payload)); } catch (e) { return; }
+    if (!o || typeof o.s !== 'number' || typeof o.iv !== 'string' || typeof o.ct !== 'string' || typeof o.sig !== 'string') return;
+    if (o.s <= lastSeq || o.ct.length > 100000) return;
+    var signed = te.encode(CH + '|' + o.s + '|' + o.iv + '|' + o.ct);
+    return crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, pubKey, unb64u(o.sig), signed).then(function (ok) {
+      if (!ok || o.s <= lastSeq) return;
+      return crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64u(o.iv), additionalData: te.encode(CH + '|' + o.s) }, aesKey, unb64u(o.ct)).then(function (pt) {
+        var st = sanitize(JSON.parse(td.decode(pt)));
+        if (!st) return;
+        lastSeq = o.s;
+        var first = !cur;
+        apply(st);
+        if (first) updNote();
+        sendAck();
+      });
+    });
+  }
+
+  var lastGeo = { tw: 0, th: 0 };
+  function sendAck() {
+    if (!aesKey) return;
+    var iv = crypto.getRandomValues(new Uint8Array(12));
+    var body = te.encode(JSON.stringify({ id: instanceId, s: lastSeq, pv: PREVIEW ? 1 : 0, w: innerWidth, h: innerHeight, tw: Math.round(lastGeo.tw), th: Math.round(lastGeo.th), par: autoParents, t: Date.now() }));
+    crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv, additionalData: te.encode(CH + '|ack') }, aesKey, body).then(function (ct) {
+      var msg = JSON.stringify({ iv: b64u(iv), ct: b64u(ct) });
+      clients.forEach(function (c) { if (c.connected) c.publish(TOPIC + '/ack', msg, { qos: 0 }); });
+    }).catch(function () {});
+  }
+
+  function sanitize(s) {
+    if (!s || typeof s !== 'object') return null;
+    var tiles = [], seen = {};
+    (Array.isArray(s.tiles) ? s.tiles : []).forEach(function (t) {
+      if (!t || (t.p !== 'twitch' && t.p !== 'kick') || typeof t.n !== 'string' || !NICK_RE[t.p].test(t.n)) return;
+      var k = tkey(t); if (seen[k] || tiles.length >= 9) return; seen[k] = 1;
+      tiles.push({ p: t.p, n: t.n });
+    });
+    var y = s.style || {}, ic = s.icons || {};
+    var anchors = ['tl', 'tc', 'tr', 'ml', 'mc', 'mr', 'bl', 'bc', 'br'];
+    return {
+      show: s.show === true, tiles: tiles,
+      audio: typeof s.audio === 'string' ? s.audio : '',
+      parents: (Array.isArray(s.parents) ? s.parents : []).map(function (h) { return String(h).toLowerCase().trim(); }).filter(function (h) { return HOST_RE.test(h); }).slice(0, 10),
+      icons: { twitch: safeUrl(ic.twitch), kick: safeUrl(ic.kick) },
+      style: {
+        cols: clamp(y.cols, 0, 4, 0) | 0, anchor: anchors.indexOf(y.anchor) >= 0 ? y.anchor : 'br',
+        gap: clamp(y.gap, 0, 60, 8), radius: clamp(y.radius, 0, 40, 10), bw: clamp(y.bw, 0, 12, 2), border: hex(y.border, '#ffffff'),
+        labels: y.labels !== false, lpos: ['bl', 'tl', 'br', 'tr'].indexOf(y.lpos) >= 0 ? y.lpos : 'bl',
+        lscale: clamp(y.lscale, 0.5, 2.5, 1), lbg: hex(y.lbg, '#000000'), lalpha: clamp(y.lalpha, 0, 1, 0.65), ltext: hex(y.ltext, '#ffffff'),
+        icons: y.icons !== false
+      }
+    };
+  }
+
+  // ---------- render ----------
+  var wrap = document.getElementById('wrap');
+  var cur = null, els = {}; // klucz -> {box, frame, label, src}
+
+  function playerSrc(t, st) {
+    var muted = PREVIEW || st.audio !== tkey(t);
+    if (t.p === 'twitch') {
+      var parents = autoParents.slice();
+      st.parents.forEach(function (h) { if (parents.indexOf(h) < 0) parents.push(h); });
+      return 'https://player.twitch.tv/?channel=' + encodeURIComponent(t.n.toLowerCase()) +
+        parents.map(function (h) { return '&parent=' + encodeURIComponent(h); }).join('') +
+        '&autoplay=true&muted=' + muted;
+    }
+    return 'https://player.kick.com/' + encodeURIComponent(t.n.toLowerCase()) + '?autoplay=true&muted=' + muted;
+  }
+
+  function makeLabel(t, st, box, old) {
+    if (old) old.remove();
+    if (!st.style.labels) return null;
+    var l = document.createElement('div'); l.className = 'label ' + st.style.lpos;
+    if (st.style.icons) {
+      var src = st.icons[t.p] || DEFAULT_ICONS[t.p];
+      var img = document.createElement('img'); img.alt = ''; img.referrerPolicy = 'no-referrer';
+      img.onerror = function () {
+        var b = document.createElement('span'); b.className = 'badge'; b.style.background = BADGE[t.p][0]; b.textContent = BADGE[t.p][1];
+        if (img.parentNode) img.replaceWith(b);
+      };
+      img.src = src; l.appendChild(img);
+    }
+    var sp = document.createElement('span'); sp.textContent = t.n; l.appendChild(sp);
+    if (cur && cur.audio === tkey(t) && !PREVIEW) { var a = document.createElement('span'); a.className = 'audio'; a.textContent = '🔊'; l.appendChild(a); }
+    box.appendChild(l);
+    return l;
+  }
+
+  function apply(st) {
+    var prev = cur; cur = st;
+    var r = document.documentElement.style, y = st.style;
+    r.setProperty('--border', y.border); r.setProperty('--bw', y.bw + 'px'); r.setProperty('--radius', y.radius + 'px');
+    r.setProperty('--lbg', rgba(y.lbg, y.lalpha)); r.setProperty('--ltext', y.ltext);
+
+    var want = {}; st.tiles.forEach(function (t) { want[tkey(t)] = t; });
+    Object.keys(els).forEach(function (k) { if (!want[k]) { els[k].box.remove(); delete els[k]; } });
+
+    var labelsChanged = !prev || JSON.stringify([prev.style.labels, prev.style.lpos, prev.style.icons, prev.icons, prev.audio]) !==
+                                 JSON.stringify([y.labels, y.lpos, y.icons, st.icons, st.audio]);
+    st.tiles.forEach(function (t) {
+      var k = tkey(t), e = els[k];
+      if (!e) {
+        var box = document.createElement('div'); box.className = 'tile new';
+        var fr = document.createElement('iframe');
+        fr.setAttribute('allow', 'autoplay; encrypted-media; fullscreen; picture-in-picture');
+        fr.setAttribute('scrolling', 'no'); fr.setAttribute('referrerpolicy', 'origin');
+        fr.title = t.p + ' ' + t.n;
+        box.appendChild(fr); wrap.appendChild(box);
+        e = els[k] = { box: box, frame: fr, label: null, src: '', fresh: true };
+      }
+      var src = playerSrc(t, st);
+      if (src !== e.src) { e.src = src; e.frame.src = src; }
+      if (e.fresh || labelsChanged || e.nick !== t.n) { e.label = makeLabel(t, st, e.box, e.label); e.nick = t.n; }
+    });
+    wrap.classList.toggle('hidden', !st.show || !st.tiles.length);
+    layout();
+    // płynne pojawienie się nowych okienek dopiero po ustawieniu pozycji
+    requestAnimationFrame(function () { Object.keys(els).forEach(function (k) { if (els[k].fresh) { els[k].fresh = false; els[k].box.classList.remove('new'); } }); });
+    sendAck();
+  }
+
+  function autoCols(n) { return n <= 1 ? 1 : n <= 4 ? 2 : 3; }
+
+  function layout() {
+    if (!cur) return;
+    var tiles = cur.tiles, n = tiles.length; if (!n) { lastGeo = { tw: 0, th: 0 }; return; }
+    var y = cur.style, W = innerWidth, H = innerHeight, gap = y.gap;
+    var cols = Math.min(y.cols || autoCols(n), n), rows = Math.ceil(n / cols);
+    var w = Math.min((W - gap * (cols - 1)) / cols, ((H - gap * (rows - 1)) / rows) * 16 / 9);
+    w = Math.max(16, w); var h = w * 9 / 16;
+    var gw = cols * w + gap * (cols - 1), gh = rows * h + gap * (rows - 1);
+    var ax = { l: 0, c: 0.5, r: 1 }[y.anchor[1]], ay = { t: 0, m: 0.5, b: 1 }[y.anchor[0]];
+    var ox = (W - gw) * ax, oy = (H - gh) * ay;
+    tiles.forEach(function (t, i) {
+      var e = els[tkey(t)]; if (!e) return;
+      var r = Math.floor(i / cols), c = i % cols;
+      var inRow = (r === rows - 1) ? n - r * cols : cols;
+      var rowOff = (cols - inRow) * (w + gap) * ax;
+      var s = e.box.style;
+      s.left = (ox + rowOff + c * (w + gap)) + 'px'; s.top = (oy + r * (h + gap)) + 'px';
+      s.width = w + 'px'; s.height = h + 'px';
+      s.fontSize = Math.max(11, h * 0.075 * y.lscale) + 'px';
+    });
+    lastGeo = { tw: w, th: h };
+  }
+
+  var rz; window.addEventListener('resize', function () { clearTimeout(rz); rz = setTimeout(function () { layout(); sendAck(); }, 150); });
+  window.addEventListener('hashchange', function () { location.reload(); });
+})();
+</script>
+</body>
+</html>
