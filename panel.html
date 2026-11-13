@@ -93,6 +93,7 @@
   <button data-t="grid" class="on">Siatka</button>
   <button data-t="list">Lista streamerów</button>
   <button data-t="look">Wygląd</button>
+  <button data-t="send">Nadawanie</button>
   <button data-t="link">Link i klucze</button>
 </nav>
 <main>
@@ -182,6 +183,57 @@
     </div>
   </section>
 
+  <!-- NADAWANIE -->
+  <section class="tab" id="t-send">
+    <h2>Nadawanie siatki od moderatora</h2>
+    <p class="hint">Siatka wyświetla się <b>u Ciebie</b> (moderatora), a gotowy obraz wysyłasz streamerowi przez darmowe <b>VDO.Ninja</b> (połączenie bezpośrednie, z hasłem). Streamer dodaje w OBS tylko jedno źródło. Program pomocniczy (⚡) i ekrany 18+ obsługujesz u siebie.</p>
+    <div class="fields">
+      <label class="f" style="grid-column: span 2">Sposób
+        <select id="n_mode"><option value="obs">Przez mój OBS (źródło przeglądarki + wirtualna kamera)</option><option value="win">Bez OBS (okno w przeglądarce + udostępnianie karty)</option></select>
+      </label>
+      <label class="f">Rozdzielczość
+        <select id="n_res"><option value="720">1280 × 720 (ok. 3–4 Mb/s wysyłania)</option><option value="1080">1920 × 1080 (ok. 6 Mb/s wysyłania)</option></select>
+      </label>
+      <label class="f">Kolor tła do wycięcia
+        <select id="n_key"><option value="ff00ff">magenta (polecany)</option><option value="00ff00">zielony</option><option value="0000ff">niebieski</option></select>
+      </label>
+    </div>
+    <p class="hint">Magenta jest polecana, bo zielony ma ikonka Kicka – w kluczowaniu by znikła.</p>
+
+    <h2>Ty (moderator)</h2>
+    <div id="n_obs">
+      <ol class="hint" style="font-size:14px;line-height:1.7">
+        <li>Uruchom <b>URUCHOM.bat</b> na tym komputerze (dla okienek ⚡) i zostaw otwarte.</li>
+        <li>W swoim OBS ustaw <b>Ustawienia → Wideo → Rozdzielczość bazowa i wyjściowa</b>: <b class="n_resv">1280×720</b>. Zrób osobną scenę, np. „Multistream”.</li>
+        <li>W tej scenie: <b>Dodaj → Przeglądarka</b>, wklej link poniżej, szerokość × wysokość: <b class="n_resv">1280×720</b>, zaznacz <b>„Kontroluj dźwięk przez OBS”</b>.
+          <div class="box" style="margin:6px 0"><div class="linkout" id="n_obslink"></div><div class="row"><button class="b" id="n_obscopy">Kopiuj link do źródła OBS</button></div></div>
+          Ekrany 18+ odklikujesz: prawy przycisk na źródle → <b>Interakcja</b>.</li>
+        <li>W OBS kliknij <b>Uruchom wirtualną kamerę</b> (przy zębatce wybierz wyjście: scena „Multistream”).</li>
+        <li><b>Dźwięk (tylko jeśli używacie 🔊):</b> zainstaluj darmowe <b>VB-CABLE</b> (vb-audio.com/Cable), w OBS <b>Ustawienia → Dźwięk → Zaawansowane → Urządzenie monitorujące: CABLE Input</b>, a w mikserze → Zaawansowane właściwości dźwięku przy źródle multistreamu ustaw <b>Monitorowanie: Tylko monitorowanie</b>.</li>
+        <li><button class="b" id="n_push">Otwórz VDO.Ninja – nadawanie</button> → wybierz kamerę <b>OBS Virtual Camera</b> i (jeśli jest) mikrofon <b>CABLE Output</b> → <b>Start</b>. Kartę zostaw otwartą.</li>
+      </ol>
+    </div>
+    <div id="n_win" style="display:none">
+      <ol class="hint" style="font-size:14px;line-height:1.7">
+        <li>Uruchom <b>URUCHOM.bat</b> na tym komputerze (dla okienek ⚡).</li>
+        <li><button class="b" id="n_open">Otwórz okno nadawania</button> – okno z siatką na kolorowym tle. Nie minimalizuj go i nie zmieniaj rozmiaru.</li>
+        <li><button class="b" id="n_push2">Otwórz VDO.Ninja – nadawanie</button> – wybierz kartę <b>„Multistream – okno nadawania”</b> i zaznacz <b>„Udostępnij też dźwięk karty”</b>.</li>
+        <li>Kliknij raz w okno nadawania, jeśli pokaże „Kliknij, żeby włączyć dźwięk”. Tam też klikasz „Zacznij oglądać” przy ekranach 18+.</li>
+      </ol>
+    </div>
+    <p class="hint" id="n_state"></p>
+
+    <h2>Link dla streamera (wyślij mu raz)</h2>
+    <div class="box"><div class="linkout" id="n_view"></div><div class="row"><button class="b red" id="n_copy">Kopiuj link dla streamera</button></div></div>
+    <ol class="hint" style="font-size:14px;line-height:1.7">
+      <li>OBS → <b>Dodaj → Przeglądarka</b>, wklej link, rozmiar <b class="n_resv">1280×720</b>, zaznacz <b>„Kontroluj dźwięk przez OBS”</b>.</li>
+      <li>Prawy przycisk na źródle → <b>Filtry → + → Kluczowanie koloru (Chroma Key)</b> → typ koloru: <b>Niestandardowy</b> → kolor: <b id="n_keyname">magenta</b> (<code id="n_keyhex">#ff00ff</code>) → <b>Podobieństwo ok. 120</b> (domyślne 400 wycinałoby też podobne kolory ze streamów; jeśli przy krawędziach zostaje obwódka tła, podnieś do 150–200).</li>
+      <li>Zmniejsz i ustaw źródło w rogu sceny. Stary element z multistreamem (jeśli był) usuń.</li>
+    </ol>
+    <p class="hint">Link zawiera hasło – kto go ma, może oglądać obraz od Ciebie. Nie wrzucaj go na czat.</p>
+    <button class="b" id="n_new">Wygeneruj nowe ID i hasło</button>
+  </section>
+
   <!-- LINK -->
   <section class="tab" id="t-link">
     <h2>Link do overlayu</h2>
@@ -206,8 +258,8 @@
     <div class="fields" style="margin-top:10px">
       <label class="f" style="grid-column: span 2">Gdzie działa program pomocniczy
         <select id="h_src">
-          <option value="streamer">Na komputerze streamera (tam, gdzie OBS)</option>
-          <option value="mod">Na komputerze moderatora (tutaj, obok panelu) – test</option>
+          <option value="streamer">Na komputerze, na którym otwarty jest overlay (OBS streamera albo okno nadawania)</option>
+          <option value="mod">Na komputerze z panelem, a overlay gdzie indziej – test</option>
         </select>
       </label>
     </div>
@@ -304,6 +356,8 @@
     if (!S.live.helper) S.live.helper = { port: 47811, q: 480 };
     if (!S.live.hsrc) S.live.hsrc = 'streamer';
     if (!S.live.urls) S.live.urls = {};
+    if (!S.ninja) S.ninja = { id: 'km' + rndAlnum(10), pw: rndAlnum(14), res: '720', key: 'ff00ff' };
+    if (!S.ninja.mode) S.ninja.mode = 'obs';
     if (!S.draft) S.draft = []; if (!S.favs) S.favs = [];
   }
 
@@ -552,7 +606,8 @@
         }
         else if (x.s === 'error') {
           cls = 'bad'; tip = x.e || '';
-          if (S.live.hsrc === 'mod' && /HTTP (401|403)/.test(tip)) { txt = '⚡ Twitch odrzuca link z innego komputera → oficjalny'; tip += ' – linki są przypisane do IP, ten tryb nie zadziała. Przełącz program pomocniczy na komputer streamera.'; }
+          if (S.live.hsrc === 'mod' && /HTTP (401|403)/.test(tip)) { txt = '⚡ Twitch odrzuca strumień w przeglądarce → oficjalny'; tip += ' – Twitch nie pozwala odtwarzać strumienia bezpośrednio na obcej stronie. W trybie „u moderatora” nie da się tego obejść: przełącz program pomocniczy na komputer streamera (tam program przepuszcza strumień za przeglądarkę).'; }
+          else if (/HTTP (401|403)/.test(tip)) { txt = '⚡ Twitch odrzuca strumień → oficjalny'; tip += ' – Twitch odrzucił zapytanie programu pomocniczego. Szczegóły są w jego czarnym oknie. Spróbuj ponownie uruchomić URUCHOM.bat (aktualizacja yt-dlp).'; }
           else txt = '⚡ błąd → oficjalny';
         }
       } else if (direct) { txt = '⚡ bezpośredni (włączanie…)'; }
@@ -664,7 +719,57 @@
     } else w.style.display = 'none';
     if ($('chkPreview').checked) $('preview').src = overlayLink(true);
   }
-  function renderAll() { renderFavChips(); renderFavRows(); renderEditor(); bindLook(); bindHelper(); renderLink(); }
+  function rndAlnum(n) { var a = 'abcdefghjkmnpqrstuvwxyz23456789', r = crypto.getRandomValues(new Uint8Array(n)), o = ''; for (var i = 0; i < n; i++) o += a[r[i] % a.length]; return o; }
+  var KEYNAME = { ff00ff: 'magenta', '00ff00': 'zielony', '0000ff': 'niebieski' };
+  function ninjaPush() {
+    var N = S.ninja, q = N.res === '1080' ? 0 : 1;
+    return 'https://vdo.ninja/?push=' + N.id + '&password=' + N.pw + (N.mode === 'win' ? '&screenshare' : '') + '&quality=' + q + '&fps=30&proaudio=1';
+  }
+  function ninjaView() { var N = S.ninja; return 'https://vdo.ninja/?view=' + N.id + '&password=' + N.pw + '&videobitrate=' + (N.res === '1080' ? 6000 : 3500) + '&scale=100&proaudio=1'; }
+  function obsLink() { return overlayLink(false) + '&bg=' + S.ninja.key; }
+  function ensureLocalHelper() {
+    if (S.live.hsrc === 'streamer') return;
+    S.live.hsrc = 'streamer'; S.live.urls = {}; $('h_src').value = 'streamer'; $('h_modbox').style.display = 'none'; publishNow();
+    toast('Program pomocniczy: na komputerze z overlayem');
+  }
+  function renderSend() {
+    var N = S.ninja;
+    $('n_mode').value = N.mode; $('n_res').value = N.res; $('n_key').value = N.key;
+    $('n_obs').style.display = N.mode === 'obs' ? '' : 'none'; $('n_win').style.display = N.mode === 'win' ? '' : 'none';
+    var rv = N.res === '1080' ? '1920×1080' : '1280×720';
+    document.querySelectorAll('.n_resv').forEach(function (e) { e.textContent = rv; });
+    $('n_obslink').textContent = obsLink();
+    $('n_view').textContent = ninjaView(); $('n_keyname').textContent = KEYNAME[N.key]; $('n_keyhex').textContent = '#' + N.key;
+    var sd = liveOverlays().filter(function (a) { return a.sd; });
+    $('n_state').textContent = sd.length ? '● Siatka do nadawania jest otwarta (' + (N.mode === 'obs' ? 'źródło w OBS' : 'okno') + ', ' + sd[0].w + ' × ' + sd[0].h + ' px) i odbiera dane z panelu.' : '○ Siatka do nadawania nie jest jeszcze otwarta (' + (N.mode === 'obs' ? 'dodaj źródło w OBS' : 'otwórz okno nadawania') + ').';
+    $('n_state').style.color = sd.length ? 'var(--ok)' : '';
+  }
+  function copyText(t, el, msg) {
+    (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(function () { toast(msg); }, function () {
+      var r = document.createRange(); r.selectNodeContents(el); var s = getSelection(); s.removeAllRanges(); s.addRange(r); toast('Zaznaczono – skopiuj Ctrl+C');
+    });
+  }
+  var sendWin = null;
+  function bindSend() {
+    $('n_mode').onchange = function () { S.ninja.mode = $('n_mode').value; save(); renderSend(); };
+    $('n_res').onchange = function () { S.ninja.res = $('n_res').value; save(); renderSend(); toast('Zmieniono – wyślij streamerowi nowy link i ustaw nową rozdzielczość'); };
+    $('n_key').onchange = function () { S.ninja.key = $('n_key').value; save(); renderSend(); toast('Podmień link w OBS / otwórz okno ponownie i zmień kolor w filtrze u streamera'); };
+    $('n_obscopy').onclick = function () { ensureLocalHelper(); copyText(obsLink(), $('n_obslink'), 'Skopiowano link do źródła OBS'); };
+    $('n_open').onclick = function () {
+      ensureLocalHelper();
+      var w = S.ninja.res === '1080' ? 1920 : 1280, h = S.ninja.res === '1080' ? 1080 : 720;
+      sendWin = window.open(overlayLink(false) + '&send=1&bg=' + S.ninja.key, 'kmulti_nadawanie', 'popup=yes,width=' + w + ',height=' + h);
+      if (!sendWin) toast('Przeglądarka zablokowała okno – zezwól na wyskakujące okna dla tej strony');
+    };
+    $('n_push').onclick = $('n_push2').onclick = function () { window.open(ninjaPush(), 'kmulti_ninja'); };
+    $('n_copy').onclick = function () { copyText(ninjaView(), $('n_view'), 'Skopiowano link dla streamera'); };
+    $('n_new').onclick = function () {
+      if (!confirm('Nowe ID i hasło? Streamer będzie musiał wkleić nowy link w OBS.')) return;
+      S.ninja.id = 'km' + rndAlnum(10); S.ninja.pw = rndAlnum(14); save(); renderSend(); toast('Wyślij streamerowi nowy link');
+    };
+  }
+  setInterval(function () { if (S && S.ninja) renderSend(); }, 5000);
+  function renderAll() { renderFavChips(); renderFavRows(); renderEditor(); bindLook(); bindHelper(); renderLink(); renderSend(); bindSend(); }
 
   // ---------- zdarzenia ----------
   document.querySelectorAll('#tabs button').forEach(function (b) {
