@@ -13,8 +13,11 @@
   .tile { position: absolute; overflow: hidden; box-sizing: border-box; background: #000;
           border: var(--bw) solid var(--border); border-radius: var(--radius);
           transition: left .45s ease, top .45s ease, width .45s ease, height .45s ease, opacity .4s ease; }
-  .tile.new { opacity: 0; }
-  .tile iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
+  .tile.new { opacity: 0; transition: opacity .4s ease; } /* nowe okienko od razu ma pełny rozmiar (bez animacji od zera) */
+  .tile iframe, .tile video { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
+  .tile video { object-fit: cover; background: #000; }
+  .tile .msg { position: absolute; inset: 0; z-index: 1; display: flex; align-items: center; justify-content: center; text-align: center;
+               padding: 1em; color: rgba(255,255,255,.75); font-weight: 600; background: #0b0c10; }
   .label { position: absolute; z-index: 2; display: flex; align-items: center; gap: .4em; max-width: calc(100% - 1.2em);
            padding: .28em .6em .28em .4em; border-radius: .45em; background: var(--lbg); color: var(--ltext);
            font-weight: 700; line-height: 1.15; white-space: nowrap; pointer-events: none; }
@@ -32,6 +35,7 @@
 <div id="wrap" class="hidden"></div>
 <div id="note"></div>
 <script src="mqtt.min.js"></script>
+<script src="hls.min.js"></script>
 <script>
 (function () {
   'use strict';
@@ -58,6 +62,7 @@
   function rgba(h, a) { var n = parseInt(h.slice(1), 16); return 'rgba(' + (n >> 16 & 255) + ',' + (n >> 8 & 255) + ',' + (n & 255) + ',' + a + ')'; }
   function safeUrl(u) { return (typeof u === 'string' && /^https:\/\/[^\s"'<>]+$/i.test(u.trim())) ? u.trim() : ''; }
   function tkey(t) { return t.p + ':' + t.n.toLowerCase(); }
+  function fp(u) { return String(u).slice(-48); } // krótki odcisk linku
 
   if (!CH || !KEY_AES || !KEY_PUB || !window.crypto || !crypto.subtle || !window.mqtt) {
     note('Multistream: niepełny link do overlayu (albo strona nie jest otwarta przez https). Skopiuj link ponownie z panelu.', true);
@@ -123,11 +128,13 @@
     });
   }
 
-  var lastGeo = { tw: 0, th: 0 };
+  var lastGeo = { tw: 0, th: 0 }, ackTimer;
+  function ackSoon() { clearTimeout(ackTimer); ackTimer = setTimeout(sendAck, 300); }
   function sendAck() {
     if (!aesKey) return;
     var iv = crypto.getRandomValues(new Uint8Array(12));
-    var body = te.encode(JSON.stringify({ id: instanceId, s: lastSeq, pv: PREVIEW ? 1 : 0, w: innerWidth, h: innerHeight, tw: Math.round(lastGeo.tw), th: Math.round(lastGeo.th), par: autoParents, t: Date.now() }));
+    var tiles = cur ? cur.tiles.map(function (t) { var e = els[tkey(t)]; return e ? { k: tkey(t), m: e.mode, s: e.sub, e: e.err, b: e.badKey || '' } : null; }).filter(Boolean) : [];
+    var body = te.encode(JSON.stringify({ id: instanceId, s: lastSeq, pv: PREVIEW ? 1 : 0, w: innerWidth, h: innerHeight, tw: Math.round(lastGeo.tw), th: Math.round(lastGeo.th), par: autoParents, helper: helperOk, tiles: tiles, t: Date.now() }));
     crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv, additionalData: te.encode(CH + '|ack') }, aesKey, body).then(function (ct) {
       var msg = JSON.stringify({ iv: b64u(iv), ct: b64u(ct) });
       clients.forEach(function (c) { if (c.connected) c.publish(TOPIC + '/ack', msg, { qos: 0 }); });
@@ -147,6 +154,22 @@
     return {
       show: s.show === true, tiles: tiles,
       audio: typeof s.audio === 'string' ? s.audio : '',
+      direct: (function () { var o = {}; var d = (s.direct && typeof s.direct === 'object') ? s.direct : {};
+        Object.keys(d).slice(0, 100).forEach(function (k) { if (d[k] === true && /^twitch:[a-z0-9_]{1,25}$/.test(k)) o[k] = true; }); return o; })(),
+      hsrc: s.hsrc === 'mod' ? 'mod' : 'streamer',
+      urls: (function () { var o = {}; var d = (s.urls && typeof s.urls === 'object') ? s.urls : {};
+        Object.keys(d).slice(0, 20).forEach(function (k) {
+          var v = d[k]; if (!/^twitch:[a-z0-9_]{1,25}$/.test(k) || !v || typeof v !== 'object') return;
+          var x = {};
+          x.at = Number(v.at) || 0;
+          if (typeof v.u === 'string' && v.u.length < 5000 && /^https?:\/\/[^\s"'<>]+$/.test(v.u)) x.u = v.u;
+          else if (v.off === true) x.off = true;
+          else if (v.nh === true) x.nh = true;
+          else x.err = String(v.err || 'nieznany błąd').slice(0, 200);
+          o[k] = x;
+        }); return o; })(),
+      helper: { port: clamp(s.helper && s.helper.port, 1024, 65535, 47811) | 0,
+                q: [160, 360, 480, 720, 1080].indexOf(Number(s.helper && s.helper.q)) >= 0 ? Number(s.helper.q) : 480 },
       parents: (Array.isArray(s.parents) ? s.parents : []).map(function (h) { return String(h).toLowerCase().trim(); }).filter(function (h) { return HOST_RE.test(h); }).slice(0, 10),
       icons: { twitch: safeUrl(ic.twitch), kick: safeUrl(ic.kick) },
       style: {
@@ -161,10 +184,14 @@
 
   // ---------- render ----------
   var wrap = document.getElementById('wrap');
-  var cur = null, els = {}; // klucz -> {box, frame, label, src}
+  var cur = null, els = {}; // klucz -> stan okienka
+  var helperOk = null;      // czy program pomocniczy odpowiada (null = jeszcze nie pytano)
+
+  function isMuted(t) { return PREVIEW || !cur || cur.audio !== tkey(t); }
+  function wantDirect(t, st) { return t.p === 'twitch' && !!st.direct[tkey(t)]; }
 
   function playerSrc(t, st) {
-    var muted = PREVIEW || st.audio !== tkey(t);
+    var muted = isMuted(t);
     if (t.p === 'twitch') {
       var parents = autoParents.slice();
       st.parents.forEach(function (h) { if (parents.indexOf(h) < 0) parents.push(h); });
@@ -194,6 +221,151 @@
     return l;
   }
 
+  // --- zawartość okienka: oficjalny odtwarzacz (iframe), bezpośredni strumień (video + hls.js) albo komunikat ---
+  function clearMedia(e) {
+    clearTimeout(e.watch); clearInterval(e.stall);
+    if (e.hls) { try { e.hls.destroy(); } catch (x) {} e.hls = null; }
+    if (e.media) { if (e.media.tagName === 'VIDEO') { try { e.media.removeAttribute('src'); e.media.load(); } catch (x) {} } e.media.remove(); e.media = null; }
+    if (e.msg) { e.msg.remove(); e.msg = null; }
+    e.src = '';
+  }
+  function setEmbed(t, e) {
+    var src = playerSrc(t, cur);
+    if (e.media && e.media.tagName === 'IFRAME') { if (e.src !== src) { e.src = src; e.media.src = src; } return; }
+    clearMedia(e);
+    var fr = document.createElement('iframe');
+    fr.setAttribute('allow', 'autoplay; encrypted-media; fullscreen; picture-in-picture');
+    fr.setAttribute('scrolling', 'no'); fr.setAttribute('referrerpolicy', 'origin');
+    fr.title = t.p + ' ' + t.n;
+    e.box.insertBefore(fr, e.box.firstChild); e.media = fr;
+    e.src = src; fr.src = src;
+  }
+  function setMsg(e, text) {
+    clearMedia(e);
+    var m = document.createElement('div'); m.className = 'msg'; m.textContent = text;
+    e.box.insertBefore(m, e.box.firstChild); e.msg = m;
+  }
+  function stopTile(e) { e.token++; clearTimeout(e.retry); clearMedia(e); }
+
+  function helperGet(path, ms) {
+    var ctl = window.AbortController ? new AbortController() : null;
+    var timer = setTimeout(function () { if (ctl) ctl.abort(); }, ms);
+    return fetch('http://127.0.0.1:' + cur.helper.port + path, { cache: 'no-store', signal: ctl ? ctl.signal : undefined })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { clearTimeout(timer); helperOk = true; return j; },
+            function (err) { clearTimeout(timer); if (!(err && err.name === 'AbortError' && ms > 20000)) helperOk = false; throw err; });
+  }
+
+  function schedule(t, e, ms, fresh) {
+    clearTimeout(e.retry);
+    var tok = e.token;
+    e.retry = setTimeout(function () { if (tok === e.token && els[tkey(t)] === e) startDirect(t, e, fresh); }, ms);
+  }
+
+  function tileCfg(t, st) {
+    // w trybie moderatora okienko restartuje się tylko, gdy panel przyśle inny link/stan
+    return st.hsrc === 'mod' ? 'mod|' + JSON.stringify(st.urls[tkey(t)] || null) : 'str|' + st.helper.q + '|' + st.helper.port;
+  }
+
+  // linki pobiera program pomocniczy moderatora, panel przysyła je w (zaszyfrowanym) stanie
+  function startDirectMod(t, e) {
+    clearTimeout(e.retry);
+    var tok = ++e.token, u = cur.urls[tkey(t)];
+    e.mode = 'direct'; e.dcfg = tileCfg(t, cur);
+    if (!e.media && !e.msg) setMsg(e, 'Ładowanie…');
+    if (!u) { if (e.sub !== 'playing') e.sub = 'loading'; ackSoon(); return; }        // panel jeszcze nie przysłał linku
+    if (u.u) {
+      if (fp(u.u) + '|' + u.at === e.badKey) { if (e.sub !== 'error') e.sub = 'loading'; ackSoon(); return; } // czekamy na świeży link
+      var wait = (e.holdUntil || 0) - Date.now();
+      if (wait > 0) { e.retry = setTimeout(function () { if (tok === e.token) startDirectMod(t, e); }, wait); return; }
+      e.curUrl = u.u; e.curAt = u.at; playHls(t, e, u.u, tok); ackSoon(); return;
+    }
+    if (u.off) { e.sub = 'offline'; e.err = ''; setMsg(e, t.n + ' – offline'); }
+    else if (u.nh) { e.sub = 'nohelper'; e.err = ''; setEmbed(t, e); }
+    else { e.sub = 'error'; e.err = u.err; setEmbed(t, e); }
+    ackSoon();
+  }
+
+  function startDirect(t, e, fresh) {
+    if (cur.hsrc === 'mod') { startDirectMod(t, e); return; }
+    clearTimeout(e.retry);
+    var tok = ++e.token;
+    e.mode = 'direct'; e.dcfg = tileCfg(t, cur);
+    if (!e.media && !e.msg) setMsg(e, 'Ładowanie…');
+    if (e.sub !== 'playing') e.sub = 'loading';
+    var q = cur.helper.q;
+    helperGet('/twitch/' + encodeURIComponent(t.n.toLowerCase()) + '?q=' + q + (fresh ? '&fresh=1' : ''), 60000).then(function (res) {
+      if (tok !== e.token) return;
+      if (res && res.ok && typeof res.url === 'string' && /^https?:\/\/[^\s"'<>]+$/.test(res.url)) { e.curUrl = res.url; playHls(t, e, res.url, tok); }
+      else if (res && res.offline) { e.sub = 'offline'; e.err = ''; setMsg(e, t.n + ' – offline'); schedule(t, e, 30000, true); }
+      else { e.sub = 'error'; e.err = String((res && res.error) || 'nieznany błąd').slice(0, 200); setEmbed(t, e); schedule(t, e, 60000, true); }
+      ackSoon();
+    }, function () {
+      if (tok !== e.token) return;
+      e.sub = 'nohelper'; e.err = ''; setEmbed(t, e); schedule(t, e, 15000, false); ackSoon();
+    });
+  }
+
+  function playHls(t, e, url, tok) {
+    if (!window.Hls || !Hls.isSupported()) { e.sub = 'error'; e.err = 'ta przeglądarka nie obsługuje HLS'; setEmbed(t, e); return; }
+    clearMedia(e);
+    var v = document.createElement('video');
+    v.autoplay = true; v.playsInline = true; v.muted = isMuted(t); v.volume = 1;
+    e.box.insertBefore(v, e.box.firstChild); e.media = v;
+    var h = new Hls({ lowLatencyMode: false, liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 10, maxBufferLength: 10,
+                      backBufferLength: 5, enableWorker: true, manifestLoadingMaxRetry: 2, levelLoadingMaxRetry: 3, fragLoadingMaxRetry: 4 });
+    e.hls = h; e.recovered = false;
+    function fail(why) {
+      if (tok !== e.token) return;
+      e.fails = (e.fails || 0) + 1;
+      if (cur.hsrc === 'mod') {
+        e.badKey = fp(e.curUrl) + '|' + e.curAt;
+        if (e.fails >= 4) { e.sub = 'error'; e.err = 'strumień nie działa (' + why + ')'; e.fails = 0; e.holdUntil = Date.now() + 60000; setEmbed(t, e); ackSoon(); return; }
+        e.sub = 'loading'; ackSoon(); return; // panel zobaczy zepsuty link i przyśle nowy
+      }
+      if (e.fails >= 4) { e.sub = 'error'; e.err = 'strumień nie działa (' + why + ')'; e.fails = 0; setEmbed(t, e); schedule(t, e, 60000, true); ackSoon(); return; }
+      // najczęściej: link wygasł albo stream się zrestartował – prosimy o świeży
+      e.sub = 'loading'; ackSoon(); schedule(t, e, 1500 * e.fails, true);
+    }
+    v.addEventListener('playing', function () { if (tok !== e.token) return; clearTimeout(e.watch); e.fails = 0; if (e.sub !== 'playing') { e.sub = 'playing'; e.err = ''; ackSoon(); } });
+    h.on(Hls.Events.MANIFEST_PARSED, function () { var p = v.play(); if (p && p.catch) p.catch(function () { v.muted = true; v.play().catch(function () {}); }); });
+    h.on(Hls.Events.ERROR, function (ev, d) {
+      if (tok !== e.token || !d.fatal) return;
+      if (d.type === Hls.ErrorTypes.MEDIA_ERROR && !e.recovered) { e.recovered = true; h.recoverMediaError(); return; }
+      try { h.destroy(); } catch (x) {} if (e.hls === h) e.hls = null;
+      var code = d.response && d.response.code;
+      fail((d.details || d.type) + (code ? ' HTTP ' + code : ''));
+    });
+    e.watch = setTimeout(function () { if (tok === e.token && e.sub !== 'playing') { try { h.destroy(); } catch (x) {} if (e.hls === h) e.hls = null; fail('brak obrazu po 25 s'); } }, 25000);
+    // strażnik: jeśli obraz stoi 15 s (koniec streama, wygasły link), prosimy o świeży link
+    var lastT = -1, still = 0;
+    e.stall = setInterval(function () {
+      if (tok !== e.token) { clearInterval(e.stall); return; }
+      if (e.sub !== 'playing') return;
+      if (v.currentTime === lastT) { still += 5; } else { still = 0; lastT = v.currentTime; }
+      if (still >= 15) {
+        clearInterval(e.stall); try { h.destroy(); } catch (x) {} if (e.hls === h) e.hls = null;
+        var now = Date.now();
+        e.stalls = (e.stalls || []).filter(function (t0) { return now - t0 < 180000; }); e.stalls.push(now);
+        if (e.stalls.length >= 3) { e.stalls = []; e.fails = 3; } // 3 zamrożenia w 3 min → od razu awaryjny odtwarzacz
+        e.sub = 'loading'; fail('obraz stoi');
+      }
+    }, 5000);
+    h.loadSource(url); h.attachMedia(v);
+  }
+
+  function syncTile(t, st, e) {
+    if (wantDirect(t, st)) {
+      var cfg = tileCfg(t, st);
+      if (e.mode !== 'direct' || e.dcfg !== cfg) { startDirect(t, e, false); return; }
+      if (e.media && e.media.tagName === 'VIDEO') e.media.muted = isMuted(t);       // dźwięk bez przeładowania
+      else if (e.media && e.media.tagName === 'IFRAME') setEmbed(t, e);             // awaryjny odtwarzacz
+    } else {
+      if (e.mode !== 'embed') { e.token++; clearTimeout(e.retry); e.mode = 'embed'; e.sub = ''; e.err = ''; }
+      setEmbed(t, e);
+    }
+  }
+
   function apply(st) {
     var prev = cur; cur = st;
     var r = document.documentElement.style, y = st.style;
@@ -201,7 +373,7 @@
     r.setProperty('--lbg', rgba(y.lbg, y.lalpha)); r.setProperty('--ltext', y.ltext);
 
     var want = {}; st.tiles.forEach(function (t) { want[tkey(t)] = t; });
-    Object.keys(els).forEach(function (k) { if (!want[k]) { els[k].box.remove(); delete els[k]; } });
+    Object.keys(els).forEach(function (k) { if (!want[k]) { stopTile(els[k]); els[k].box.remove(); delete els[k]; } });
 
     var labelsChanged = !prev || JSON.stringify([prev.style.labels, prev.style.lpos, prev.style.icons, prev.icons, prev.audio]) !==
                                  JSON.stringify([y.labels, y.lpos, y.icons, st.icons, st.audio]);
@@ -209,19 +381,15 @@
       var k = tkey(t), e = els[k];
       if (!e) {
         var box = document.createElement('div'); box.className = 'tile new';
-        var fr = document.createElement('iframe');
-        fr.setAttribute('allow', 'autoplay; encrypted-media; fullscreen; picture-in-picture');
-        fr.setAttribute('scrolling', 'no'); fr.setAttribute('referrerpolicy', 'origin');
-        fr.title = t.p + ' ' + t.n;
-        box.appendChild(fr); wrap.appendChild(box);
-        e = els[k] = { box: box, frame: fr, label: null, src: '', fresh: true };
+        wrap.appendChild(box);
+        e = els[k] = { box: box, media: null, msg: null, hls: null, label: null, src: '', fresh: true, mode: '', sub: '', err: '', token: 0, fails: 0 };
       }
-      var src = playerSrc(t, st);
-      if (src !== e.src) { e.src = src; e.frame.src = src; }
       if (e.fresh || labelsChanged || e.nick !== t.n) { e.label = makeLabel(t, st, e.box, e.label); e.nick = t.n; }
     });
     wrap.classList.toggle('hidden', !st.show || !st.tiles.length);
     layout();
+    // odtwarzacz ładujemy dopiero, gdy okienko ma już docelowy rozmiar – Twitch sprawdza rozmiar przy starcie
+    st.tiles.forEach(function (t) { syncTile(t, st, els[tkey(t)]); });
     // płynne pojawienie się nowych okienek dopiero po ustawieniu pozycji
     requestAnimationFrame(function () { Object.keys(els).forEach(function (k) { if (els[k].fresh) { els[k].fresh = false; els[k].box.classList.remove('new'); } }); });
     sendAck();

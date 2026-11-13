@@ -63,12 +63,15 @@
   .et .tools button { background: rgba(0,0,0,.35); border: 1px solid transparent; color: var(--text); border-radius: 6px; padding: 2px 7px; font-size: 13px; cursor: pointer; }
   .et .tools button:hover { border-color: #59617a; }
   .et .tools button.on { background: #f59e0b; color: #000; }
+  .et .pl.ok { color: var(--ok); } .et .pl.warn { color: var(--warn); } .et .pl.bad { color: #ff6b75; }
   .et .num { position: absolute; right: 8px; top: 6px; color: var(--muted); font-size: 12px; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
   #liveInfo { margin-top: 8px; }
   #liveInfo b { color: var(--text); }
   .dirty { color: var(--warn); }
-  #preview { width: 100%; aspect-ratio: 16/9; border: 1px dashed var(--line); border-radius: 8px; background: repeating-conic-gradient(#1b1e28 0 25%, #232735 0 50%) 0 0/24px 24px; }
+  #pvBox { position: relative; width: 100%; aspect-ratio: 16/9; overflow: hidden; border: 1px dashed var(--line); border-radius: 8px; background: repeating-conic-gradient(#1b1e28 0 25%, #232735 0 50%) 0 0/24px 24px; }
+  /* podgląd renderuje overlay w pełnym 1920x1080 i tylko go pomniejsza – dzięki temu Twitch widzi duże okienka i sam startuje */
+  #preview { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; border: 0; transform-origin: 0 0; }
 
   .favlist { width: 100%; border-collapse: collapse; }
   .favlist td { padding: 6px 4px; border-bottom: 1px solid var(--line); }
@@ -83,6 +86,7 @@
   <h1>📺 Multistream – panel moderatora</h1>
   <span class="chip" id="stBrokers">Serwery: –</span>
   <span class="chip" id="stOverlay">Overlay: –</span>
+  <span class="chip" id="stHelper" style="display:none">–</span>
   <span class="chip" id="stLive">–</span>
 </header>
 <nav id="tabs">
@@ -120,7 +124,7 @@
       </div>
       <div class="right" id="previewWrap">
         <h2>Podgląd overlayu</h2>
-        <iframe id="preview" title="Podgląd" allow="autoplay; encrypted-media" referrerpolicy="origin"></iframe>
+        <div id="pvBox"><iframe id="preview" title="Podgląd" allow="autoplay; encrypted-media" referrerpolicy="origin"></iframe></div>
         <p class="hint">Jeśli Twitch pokazuje tu błąd, a na streamie działa – to normalne (podgląd ma inną domenę nadrzędną).</p>
       </div>
     </div>
@@ -189,6 +193,31 @@
     <div class="box warnbox hint" id="linkWarn" style="display:none"></div>
     <p class="hint">Link pozwala tylko <b>oglądać</b> siatkę. Sterować może wyłącznie ta przeglądarka. Mimo to nie wrzucaj linku na czat.</p>
 
+    <h2>Bezpośredni strumień Twitcha (program pomocniczy)</h2>
+    <p class="hint">Okienka Twitcha z włączonym <b>⚡</b> nie używają oficjalnego odtwarzacza, tylko pobierają strumień przez program pomocniczy uruchomiony na <b>komputerze streamera</b> (URUCHOM.bat). Dzięki temu nie ma ekranu „treści dla dorosłych” ani limitu 400×300. Jeśli program nie działa, okienko samo wraca do oficjalnego odtwarzacza.</p>
+    <div class="fields">
+      <label class="f">Jakość
+        <select id="h_q"><option value="160">160p</option><option value="360">360p</option><option value="480">480p (polecane)</option><option value="720">720p</option><option value="1080">1080p</option></select>
+      </label>
+      <label class="f">Port programu <input type="text" id="h_port" inputmode="numeric"></label>
+      <label class="c" style="grid-column: span 2"><input type="checkbox" id="h_pref"> Nowe okienka Twitcha od razu z ⚡</label>
+    </div>
+    <p class="hint">Port zmieniaj tylko, jeśli zmieniłeś go też w programie (domyślnie 47811).</p>
+    <div class="fields" style="margin-top:10px">
+      <label class="f" style="grid-column: span 2">Gdzie działa program pomocniczy
+        <select id="h_src">
+          <option value="streamer">Na komputerze streamera (tam, gdzie OBS)</option>
+          <option value="mod">Na komputerze moderatora (tutaj, obok panelu) – test</option>
+        </select>
+      </label>
+    </div>
+    <div class="box hint" id="h_modbox" style="display:none">
+      Panel pobiera linki przez program uruchomiony na <b>tym</b> komputerze i wysyła je do overlaya streamera. <b>Panel musi być otwarty przez cały stream</b> – to on podaje nowe linki, gdy stare wygasną.<br>
+      Przeglądarka może zapytać o <b>dostęp do urządzeń w sieci lokalnej</b> – kliknij „Zezwól”.<br>
+      Jeśli Twitch przypisuje linki do adresu IP, okienka pokażą „Twitch odrzuca link z innego komputera” – wtedy ten tryb nie zadziała i trzeba wrócić do programu u streamera.
+      <div class="row"><button class="b" id="h_test">Sprawdź program na tym komputerze</button></div>
+    </div>
+
     <h2>Domeny dla Twitcha</h2>
     <p class="hint">Twitch odtwarza się tylko na stronach, które zna. Overlay sam podaje swoją domenę i domeny stron, w które jest osadzony. Jeśli okienka Twitcha pokazują błąd, wpisz tu domenę swojego narzędzia do overlaya (np. <code>overlay.example.com</code>), jedna w linii.</p>
     <textarea id="parents" rows="3" placeholder="np. streamelements.com"></textarea>
@@ -242,7 +271,7 @@
   }
 
   function defaultLive() {
-    return { show: false, tiles: [], audio: '', parents: [], icons: { twitch: '', kick: '' },
+    return { show: false, tiles: [], audio: '', parents: [], icons: { twitch: '', kick: '' }, direct: {}, helper: { port: 47811, q: 480 }, hsrc: 'streamer', urls: {},
       style: { cols: 0, anchor: 'br', gap: 8, radius: 10, bw: 2, border: '#ffffff', labels: true, icons: true, lpos: 'bl', lscale: 1, lbg: '#000000', lalpha: 0.65, ltext: '#ffffff' } };
   }
 
@@ -268,7 +297,14 @@
     if (!S || !S.keys || !S.live) {
       p = newKeys().then(function (k) { S = { keys: k, draft: [], favs: [], live: defaultLive(), brokers: DEFAULT_BROKERS.slice(), overlayBase: '' }; save(); });
     }
-    return p.then(loadKeys).then(function () { renderAll(); connect(); });
+    return p.then(function () { migrate(); }).then(loadKeys).then(function () { renderAll(); connect(); });
+  }
+  function migrate() {
+    if (!S.live.direct) S.live.direct = {};
+    if (!S.live.helper) S.live.helper = { port: 47811, q: 480 };
+    if (!S.live.hsrc) S.live.hsrc = 'streamer';
+    if (!S.live.urls) S.live.urls = {};
+    if (!S.draft) S.draft = []; if (!S.favs) S.favs = [];
   }
 
   // ---------- połączenie ----------
@@ -291,7 +327,7 @@
     if (!o || typeof o.iv !== 'string' || typeof o.ct !== 'string') return;
     crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64u(o.iv), additionalData: te.encode(S.keys.ch + '|ack') }, aesKey, unb64u(o.ct)).then(function (pt) {
       var a = JSON.parse(td.decode(pt));
-      if (a && typeof a.id === 'string') { a.at = Date.now(); acks[a.id] = a; status(); }
+      if (a && typeof a.id === 'string') { a.at = Date.now(); acks[a.id] = a; status(); updateTileStatus(); }
     }).catch(function () {});
   }
   function liveOverlays() { var now = Date.now(); return Object.keys(acks).map(function (k) { return acks[k]; }).filter(function (a) { return now - a.at < 25000 && !a.pv; }); }
@@ -299,7 +335,7 @@
     var n = clients.filter(function (c) { return c.connected; }).length;
     var b = $('stBrokers'); b.textContent = 'Serwery: ' + n + '/' + clients.length; b.className = 'chip ' + (n ? 'ok' : 'bad');
     var L = S.live, lv = liveOverlays(), o = $('stOverlay');
-    var hasTw = L.tiles.some(function (t) { return t.p === 'twitch'; });
+    var hasTw = L.tiles.some(function (t) { return t.p === 'twitch' && !L.direct[tkey(t)]; }); // okienka z ⚡ nie mają limitu rozmiaru
     var small = lv.filter(function (a) { return a.tw && (a.tw < 400 || a.th < 300); });
     if (!lv.length) { o.textContent = 'Overlay: nie wykryto'; o.className = 'chip warn'; o.title = 'Żaden overlay nie jest teraz otwarty – to normalne, jeśli OBS jest wyłączony.'; }
     else if (small.length && hasTw) { o.textContent = 'Overlay: okienka ' + small[0].tw + '×' + small[0].th + ' px – za małe dla Twitcha'; o.className = 'chip warn'; o.title = 'Twitch wymaga min. 400×300 px. Powiększ element overlaya (np. 1920×1080) i zmniejsz go na scenie.'; }
@@ -307,6 +343,19 @@
     var l = $('stLive');
     if (!L.tiles.length) { l.textContent = 'Na streamie: pusto'; l.className = 'chip'; }
     else { l.textContent = 'Na streamie: ' + (L.show ? 'widoczna' : 'ukryta') + ' (' + L.tiles.length + ')'; l.className = 'chip ' + (L.show ? 'ok' : ''); }
+    var hc = $('stHelper'), anyDirect = L.tiles.some(function (t) { return L.direct[tkey(t)]; });
+    hc.style.display = anyDirect ? '' : 'none';
+    if (anyDirect && L.hsrc === 'mod') {
+      if (modHelperOk === true) { hc.textContent = 'Pomocnik (u Ciebie): działa'; hc.className = 'chip ok'; hc.title = 'Program pomocniczy na tym komputerze odpowiada. Nie zamykaj panelu – to on dostarcza linki.'; }
+      else if (modHelperOk === false) { hc.textContent = 'Pomocnik (u Ciebie): nie działa'; hc.className = 'chip bad'; hc.title = 'Uruchom URUCHOM.bat na tym komputerze i zezwól przeglądarce na dostęp do sieci lokalnej.'; }
+      else { hc.textContent = 'Pomocnik (u Ciebie): sprawdzam…'; hc.className = 'chip'; }
+    } else if (anyDirect) {
+      var hs = lv.map(function (a) { return a.helper; });
+      if (!lv.length) { hc.textContent = 'Pomocnik: –'; hc.className = 'chip'; hc.title = 'Stan programu pomocniczego widać, gdy overlay jest otwarty.'; }
+      else if (hs.indexOf(true) >= 0) { hc.textContent = 'Pomocnik: działa'; hc.className = 'chip ok'; hc.title = 'Program pomocniczy na komputerze streamera odpowiada.'; }
+      else if (hs.indexOf(false) >= 0) { hc.textContent = 'Pomocnik: nie działa'; hc.className = 'chip bad'; hc.title = 'Streamer musi uruchomić URUCHOM.bat. Do tego czasu lecą oficjalne odtwarzacze.'; }
+      else { hc.textContent = 'Pomocnik: sprawdzam…'; hc.className = 'chip'; }
+    }
     var par = {}; lv.forEach(function (a) { (a.par || []).forEach(function (h) { par[h] = 1; }); });
     $('detParents').textContent = Object.keys(par).length ? 'Overlay wykrył automatycznie: ' + Object.keys(par).join(', ') : '';
   }
@@ -330,6 +379,48 @@
   }
   setInterval(publishNow, 30000);
 
+  // ---------- tryb „program pomocniczy u moderatora” ----------
+  var modState = {}, modHelperOk = null;
+  function fp(u) { return String(u).slice(-48); }
+  function helperFetch(path, ms) {
+    var ctl = window.AbortController ? new AbortController() : null;
+    var timer = setTimeout(function () { if (ctl) ctl.abort(); }, ms);
+    return fetch('http://127.0.0.1:' + S.live.helper.port + path, { cache: 'no-store', signal: ctl ? ctl.signal : undefined })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { clearTimeout(timer); return j; }, function (e) { clearTimeout(timer); throw e; });
+  }
+  function modTick() {
+    var L = S.live; if (L.hsrc !== 'mod') return;
+    var q = L.helper.q, now = Date.now(), want = {}, changed = false, tl = latestTiles() || {};
+    L.tiles.forEach(function (t) { if (t.p === 'twitch' && L.direct[tkey(t)]) want[tkey(t)] = t; });
+    Object.keys(L.urls).forEach(function (k) { if (!want[k]) { delete L.urls[k]; changed = true; } });
+    Object.keys(want).forEach(function (k) {
+      var en = L.urls[k], ms = modState[k] || (modState[k] = { busy: false, last: 0 }), x = tl[k];
+      if (ms.busy) return;
+      var bad = !!(en && en.u && x && x.b && x.b === fp(en.u) + '|' + en.at);
+      var age = en ? now - en.at : Infinity;
+      var need = !en || en.q !== q || bad || (en.off && age > 30000) || (en.err && age > 60000) || (en.nh && age > 15000);
+      if (!need || (en && now - ms.last < 3000)) return;
+      ms.busy = true; ms.last = now;
+      helperFetch('/twitch/' + encodeURIComponent(want[k].n.toLowerCase()) + '?q=' + q + ((bad || (en && en.off)) ? '&fresh=1' : ''), 60000)
+        .then(function (res) {
+          modHelperOk = true;
+          var n2 = { q: q, at: Date.now() };
+          if (res && res.ok && typeof res.url === 'string' && /^https?:\/\/[^\s"'<>]+$/.test(res.url)) n2.u = res.url;
+          else if (res && res.offline) n2.off = true;
+          else n2.err = String((res && res.error) || 'nieznany błąd').slice(0, 200);
+          return n2;
+        }, function () { modHelperOk = false; return { q: q, at: Date.now(), nh: true }; })
+        .then(function (n2) {
+          ms.busy = false;
+          if (S.live.hsrc !== 'mod' || !S.live.direct[k]) return;
+          S.live.urls[k] = n2; publishSoon(); status(); updateTileStatus();
+        });
+    });
+    if (changed) publishSoon();
+  }
+  setInterval(modTick, 2000);
+
   // ---------- parsowanie wpisu ----------
   function parseEntry(str, defP) {
     str = (str || '').trim(); if (!str) return null;
@@ -347,7 +438,9 @@
   function addDraft(t) {
     if (inDraft(t)) { toast(t.n + ' już jest w układzie'); return false; }
     if (S.draft.length >= MAX) { toast('Maksymalnie ' + MAX + ' okienek'); return false; }
-    S.draft.push({ p: t.p, n: t.n }); save(); renderEditor(); renderFavChips(); return true;
+    S.draft.push({ p: t.p, n: t.n });
+    if (t.p === 'twitch' && S.prefDirect && !S.live.direct[tkey(t)]) { S.live.direct[tkey(t)] = true; publishSoon(); }
+    save(); renderEditor(); renderFavChips(); return true;
   }
   function addFav(t) {
     var k = tkey(t);
@@ -410,7 +503,7 @@
       var d = el('div', 'et ' + t.p); d.dataset.i = i;
       d.style.left = x + 'px'; d.style.top = y + 'px'; d.style.width = w + 'px'; d.style.height = h + 'px';
       var top = el('div'); var nm = el('div', 'nm'); nm.appendChild(el('span', 'pf ' + t.p)); nm.appendChild(el('span', null, t.n));
-      top.appendChild(nm); top.appendChild(el('div', 'pl', PNAME[t.p])); d.appendChild(top);
+      var pl = el('div', 'pl'); fillStatus(pl, t); top.appendChild(nm); top.appendChild(pl); d.appendChild(top); d.dataset.k = tkey(t);
       d.appendChild(el('div', 'num', String(i + 1)));
       var tools = el('div', 'tools');
       var au = el('button', S.live.audio === tkey(t) ? 'on' : '', '🔊'); au.title = 'Dźwięk z tego okienka (tylko jedno naraz)';
@@ -419,12 +512,57 @@
       fv.onclick = function (ev) { ev.stopPropagation(); toast(addFav(t) ? 'Zapisano ' + t.n + ' na liście' : t.n + ' już jest na liście'); };
       var rm = el('button', '', '✕'); rm.title = 'Usuń z układu';
       rm.onclick = function (ev) { ev.stopPropagation(); S.draft.splice(i, 1); save(); renderEditor(); renderFavChips(); };
-      [au, fv, rm].forEach(function (b) { b.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); }); tools.appendChild(b); });
+      var btns = [au, fv, rm];
+      if (t.p === 'twitch') {
+        var dr = el('button', S.live.direct[tkey(t)] ? 'on' : '', '⚡');
+        dr.title = 'Bezpośredni strumień (przez program pomocniczy u streamera): bez ekranu 18+ i bez limitu 400×300';
+        dr.onclick = function (ev) {
+          ev.stopPropagation(); var k = tkey(t);
+          if (S.live.direct[k]) delete S.live.direct[k]; else S.live.direct[k] = true;
+          renderEditor(); publishNow(); toast(S.live.direct[k] ? t.n + ': bezpośredni strumień' : t.n + ': oficjalny odtwarzacz');
+        };
+        btns.unshift(dr);
+      }
+      btns.forEach(function (b) { b.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); }); tools.appendChild(b); });
       d.appendChild(tools);
       d.addEventListener('pointerdown', startDrag);
       ed.appendChild(d);
     });
     renderLiveInfo();
+  }
+
+  function latestTiles() {
+    var lv = liveOverlays().sort(function (a, b) { return b.at - a.at; });
+    var m = {}; if (lv[0] && Array.isArray(lv[0].tiles)) lv[0].tiles.forEach(function (x) { if (x && x.k) m[x.k] = x; });
+    return lv.length ? m : null;
+  }
+  function fillStatus(pl, t) {
+    var k = tkey(t), direct = !!S.live.direct[k], inLive = S.live.tiles.some(function (x) { return tkey(x) === k; });
+    var txt = PNAME[t.p], cls = '', tip = '', m = latestTiles(), x = m && m[k];
+    if (direct) txt = '⚡ bezpośredni';
+    if (inLive && x) {
+      if (x.m === 'direct') {
+        if (x.s === 'playing') { txt = '⚡ bezpośredni – działa'; cls = 'ok'; }
+        else if (x.s === 'loading') { txt = '⚡ łączenie…'; }
+        else if (x.s === 'offline') { txt = '⚡ offline'; cls = 'warn'; }
+        else if (x.s === 'nohelper') {
+          cls = 'bad';
+          if (S.live.hsrc === 'mod') { txt = '⚡ Twój pomocnik nie odpowiada → oficjalny'; tip = 'Uruchom URUCHOM.bat na tym komputerze i zezwól przeglądarce na dostęp do sieci lokalnej.'; }
+          else { txt = '⚡ pomocnik nie działa → oficjalny'; tip = 'Streamer musi uruchomić URUCHOM.bat. Do tego czasu leci oficjalny odtwarzacz.'; }
+        }
+        else if (x.s === 'error') {
+          cls = 'bad'; tip = x.e || '';
+          if (S.live.hsrc === 'mod' && /HTTP (401|403)/.test(tip)) { txt = '⚡ Twitch odrzuca link z innego komputera → oficjalny'; tip += ' – linki są przypisane do IP, ten tryb nie zadziała. Przełącz program pomocniczy na komputer streamera.'; }
+          else txt = '⚡ błąd → oficjalny';
+        }
+      } else if (direct) { txt = '⚡ bezpośredni (włączanie…)'; }
+    } else if (direct && !inLive) { txt = '⚡ bezpośredni'; }
+    pl.textContent = txt; pl.title = tip; pl.className = 'pl ' + cls;
+  }
+  function updateTileStatus() {
+    document.querySelectorAll('.et').forEach(function (d) {
+      var t = S.draft[+d.dataset.i]; var pl = d.querySelector('.pl'); if (t && pl) fillStatus(pl, t);
+    });
   }
 
   // przeciąganie (mysz i dotyk): upuszczenie na inne okienko zamienia je miejscami
@@ -478,6 +616,22 @@
     status();
   }
 
+  function bindHelper() {
+    $('h_q').value = S.live.helper.q; $('h_port').value = S.live.helper.port; $('h_pref').checked = !!S.prefDirect;
+    $('h_q').onchange = function () { S.live.helper.q = Number($('h_q').value); publishNow(); toast('Jakość: ' + S.live.helper.q + 'p'); };
+    $('h_port').onchange = function () { var v = parseInt($('h_port').value, 10); if (v >= 1024 && v <= 65535) { S.live.helper.port = v; publishNow(); } else { $('h_port').value = S.live.helper.port; toast('Port musi być liczbą 1024–65535'); } };
+    $('h_pref').onchange = function () { S.prefDirect = $('h_pref').checked; save(); };
+    $('h_src').value = S.live.hsrc; $('h_modbox').style.display = S.live.hsrc === 'mod' ? 'block' : 'none';
+    $('h_src').onchange = function () {
+      S.live.hsrc = $('h_src').value; S.live.urls = {}; modState = {}; modHelperOk = null;
+      $('h_modbox').style.display = S.live.hsrc === 'mod' ? 'block' : 'none';
+      publishNow(); status(); updateTileStatus(); if (S.live.hsrc === 'mod') modTick();
+    };
+    $('h_test').onclick = function () {
+      helperFetch('/ping', 4000).then(function (r) { modHelperOk = true; status(); toast(r && r.ok ? 'Program działa (wersja ' + r.v + ')' : 'Coś odpowiada, ale to nie ten program'); },
+        function () { modHelperOk = false; status(); toast('Brak odpowiedzi – uruchom URUCHOM.bat i zezwól na dostęp do sieci lokalnej'); });
+    };
+  }
   function bindLook() {
     var y = S.live.style;
     ['cols', 'anchor', 'gap', 'radius', 'bw', 'border', 'lpos', 'lscale', 'lbg', 'lalpha', 'ltext'].forEach(function (k) {
@@ -510,7 +664,7 @@
     } else w.style.display = 'none';
     if ($('chkPreview').checked) $('preview').src = overlayLink(true);
   }
-  function renderAll() { renderFavChips(); renderFavRows(); renderEditor(); bindLook(); renderLink(); }
+  function renderAll() { renderFavChips(); renderFavRows(); renderEditor(); bindLook(); bindHelper(); renderLink(); }
 
   // ---------- zdarzenia ----------
   document.querySelectorAll('#tabs button').forEach(function (b) {
@@ -542,6 +696,7 @@
     var on = $('chkPreview').checked;
     $('previewWrap').style.display = on ? 'block' : 'none';
     $('preview').src = on ? overlayLink(true) : 'about:blank';
+    scalePreview();
   };
   $('btnBulk').onclick = function () {
     var ok = 0, bad = [];
@@ -577,7 +732,7 @@
       var o = JSON.parse(txt);
       if (!o || o.kmulti !== 1 || !o.data || !o.data.keys || !o.data.live) throw new Error('zły plik');
       if (!confirm('Wczytać kopię? Obecne ustawienia w tej przeglądarce zostaną zastąpione.')) return;
-      S = o.data; S.draft = S.draft || []; S.favs = S.favs || []; save();
+      S = o.data; migrate(); save();
       return loadKeys().then(function () { renderAll(); connect(); toast('Wczytano kopię'); });
     }).catch(function () { toast('To nie jest poprawny plik kopii'); });
     $('fileImport').value = '';
@@ -589,6 +744,8 @@
   var rzt, lastW = 0;
   function onResize() { var w = $('editor').clientWidth; if (w && w !== lastW) { lastW = w; clearTimeout(rzt); rzt = setTimeout(renderEditor, 60); } }
   if (window.ResizeObserver) new ResizeObserver(onResize).observe($('editor')); else window.addEventListener('resize', onResize);
+  function scalePreview() { var w = $('pvBox').clientWidth; if (w) $('preview').style.transform = 'scale(' + (w / 1920) + ')'; }
+  if (window.ResizeObserver) new ResizeObserver(scalePreview).observe($('pvBox')); else window.addEventListener('resize', scalePreview);
 
   init().catch(function (e) { console.error(e); toast('Błąd uruchamiania panelu'); });
 })();
